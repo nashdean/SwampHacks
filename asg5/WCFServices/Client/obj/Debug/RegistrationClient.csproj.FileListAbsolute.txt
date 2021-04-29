@@ -1,0 +1,6 @@
+C:\ISM6236\Dietz-Dean-assignments\asg5 - C#\WCFServices\Client\bin\Debug\Client.exe.config
+C:\ISM6236\Dietz-Dean-assignments\asg5 - C#\WCFServices\Client\bin\Debug\Client.exe
+C:\ISM6236\Dietz-Dean-assignments\asg5 - C#\WCFServices\Client\bin\Debug\Client.pdb
+C:\ISM6236\Dietz-Dean-assignments\asg5 - C#\WCFServices\Client\obj\Debug\RegistrationClient.csproj.CoreCompileInputs.cache
+C:\ISM6236\Dietz-Dean-assignments\asg5 - C#\WCFServices\Client\obj\Debug\Client.exe
+C:\ISM6236\Dietz-Dean-assignments\asg5 - C#\WCFServices\Client\obj\Debug\Client.pdb
