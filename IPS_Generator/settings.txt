@@ -1,0 +1,15 @@
+masterPath, P:\Office\Interns\IPSProject\IPSTestGeneration\
+flagPath, P:\Office\Interns\IPSProject\Flag Folder\
+templatePath, P:\Office\Interns\IPSProject\IPStemplate.xlsx
+excelDBPath, P:\Office\Interns\IPSProject\2021-03-26 Asset export page.xlsx
+defaultExcel, P:\Office\Interns\IPSProject\2021-03-26 Asset export page- Backup.xlsx
+taxPath, P:\Office\Interns\IPSProject\TaxStatus.xlsx
+testIPS, 1
+cell_references, O5:O6:O8:O12:O14
+
+
+
+
+
+
+

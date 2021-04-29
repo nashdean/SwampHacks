@@ -1,0 +1,2542 @@
+import tkinter as tk
+import os.path
+import pathlib
+
+from tkinter import *
+from tkinter import scrolledtext
+from tkinter import ttk
+from tkinter import font
+from tkinter import messagebox
+from tkinter import simpledialog
+from tkinter import filedialog
+from tkinter.filedialog import askopenfilename
+
+from fuzzywuzzy import fuzz 
+from fuzzywuzzy import process
+from fuzzywuzzy.fuzz import partial_ratio
+
+import pandas as pd
+from datetime import datetime
+
+from openpyxl import load_workbook
+import re
+import time
+import os
+from tqdm import tqdm 
+from win32com import client
+import win32api
+
+import shutil
+
+import earthpy as et
+  
+start_time = time.time()
+
+#Define What we want the program to do
+brandonize = False ## Want to run Brandon's WB, set to TRUE
+applyFilter = True ## Want to run a generic filter, set to TRUE (Normally TRUE)
+accountNumFilter = True ## Want to run filter on Account Number, set to TRUE
+testIPS = True ## If testing, saves to IPSTestGeneration folder and does not sort to client.  
+                ##False saves to BrandonIPS file (Normally FALSE)
+setPDF = True ## Creates a PDF (Normally TRUE)
+
+today = datetime.now()
+today_str = today.strftime("%Y-%m-%d")
+
+flag_list = []
+record = ""
+
+#Used for the progressBar in 'Bottom Bar' (i.e. the status bar)
+ipsCount = 0
+ipsTotal = 0
+
+client_Path = ""
+
+## Creates a path from any computer to the downloads folder
+def create_path(folder = '', file = None):
+    
+    path = os.path.join(et.io.HOME, os.path.join('downloads', os.path.join('IPS_Generator', folder)))
+    
+    try:    
+        if ("/" in path) and file != None:
+            return path+"/"+file
+        elif file != None:
+            return path+"\\\\"+file
+        else:
+            return path
+    except:
+        messagebox.showerror("Filepath Error", "Your directory filepath could not be initialized")
+    
+settingsPath = create_path(file='settings.txt')
+
+excelDBPath = create_path('ExcelDB','IPSTestDB.xlsx')
+defaultExcel = create_path('ExcelDB','IPSTestDB.xlsx')
+
+masterPath = create_path('MasterFolder')
+defaultMstr = create_path('MasterFolder')
+
+flagPath = create_path('FlagFolder')
+defaultFlag = create_path('FlagFolder')
+
+taxPath = create_path('TaxPath', 'TaxStatus.xlsx')
+defaultTax = create_path('TaxPath', 'TaxStatus.xlsx')
+
+templatePath = create_path('TemplatePath', 'IPStemplate.xlsx')
+defaultTemplate = create_path('TemplatePath', 'IPStemplate.xlsx')
+
+#Cell references for IPS Template
+ref1 = 'O5'
+ref2 = 'O6'
+ref3 = 'O8'
+ref4 = 'O12'
+ref5 = 'O14'
+
+default_cell_references = {"ref1": ref1, "ref2": ref2, "ref3": ref3, 
+                       "ref4": ref4, "ref5": ref5}
+
+tax_status_df = pd.DataFrame()
+junxure_df = pd.DataFrame()
+
+try:
+    IPSWorkbook = pd.read_excel(excelDBPath)
+
+except:
+    
+    messagebox.showerror("Filepath Error", "Your filepath for the Excel IPS Database is broken. Please reset the database, the filepath, and reset the application.")
+
+try:
+    template_wb = load_workbook(templatePath)
+    ws1 = template_wb.active #worksheet
+    
+except:
+    
+    messagebox.showerror("Filepath Error", "Your filepath for the IPS Template is broken. Please reset the excel IPS Template, the filepath, and reset the application.")
+
+try:
+    TaxWorkbook = pd.read_excel(taxPath)
+except:
+    
+    messagebox.showerror("Filepath Error", "Your filepath for the Excel Tax Workbook is broken. Please reset the Tax Workbook, the filepath, and reset the application.")
+
+sel = ""
+noSel = True
+
+success = 0
+failure = 0
+report = [success,failure]
+acct_report = {}
+
+file_exists = os.path.isfile(settingsPath) 
+L = ["masterPath, " + defaultMstr, "flagPath, " + defaultFlag, "templatePath, " + defaultTemplate, "excelDBPath, " + defaultExcel, "defaultExcel, " + defaultExcel, "taxPath, " + defaultTax, "testIPS, 1", "cell_references, " + ref1 + ":" + ref2 + ":" + ref3 + ":" + ref4 + ":" +  ref5] 
+
+def match_Record(query):
+    
+    col = 'Record_Name'
+    choices = junxure_df[col].unique().tolist()
+    
+    results = process.extractBests(query, choices, scorer=fuzz.token_set_ratio, score_cutoff = 80, limit = 1000)
+    
+    print(query)
+    print(results)
+    
+    openClientRecord(results)
+    
+def set_cells(_event = None):
+    global ref1, ref2, ref3, ref4, ref5
+    
+    allocExcel.set(ref1)
+    allocTxt.delete('0', END)
+    allocTxt.insert('0', ref1)
+
+    taxExcel.set(ref2)
+    taxCellTxt.delete('0', END)
+    taxCellTxt.insert('0', ref2)
+
+    timeExcel.set(ref3)
+    timeTxt.delete('0', END)
+    timeTxt.insert('0', ref3)
+
+    assetExcel.set(ref4)
+    assetTxt.delete('0', END)
+    assetTxt.insert('0', ref4)
+
+    numExcel.set(ref5)
+    numTxt.delete('0', END)
+    numTxt.insert('0', ref5)
+    
+def reset_Settings(_event = None):
+    
+    r.set(defaultMstr)
+    fp.set(defaultFlag)
+    tmp.set(defaultTemplate)
+    tstVar.set(1)
+    
+    #Sets the cell references back to the Default Excel IPS Template spreadsheet
+    for key, val in default_cell_references.items():
+        globals()[key] = val
+        
+    set_cells()
+        
+
+def reset_progress():
+    progressLbl.pack_forget()
+    progressBar.pack_forget()
+    progressBar['value'] = 0
+    progressLbl.config(text = "")
+
+## Updates the Progress bar and notifies user of the overall progress of IPS generation
+def show_progress(count, total, update):
+    
+    if count == 0:
+        progressLbl.config(text = "0 out of " + str(total))
+    if update:
+        progressLbl.config(text = str(count) + " out of " + str(total))
+        progressBar['value'] += round(1/total*100,2)
+    print("progress is " + str(progressBar['value']))
+    
+def not_ready():
+    updateLbl.config(text = "Not Ready")
+    updateLbl.configure(fg = "red")
+    
+def ready():
+    updateLbl.config(text = "Ready")
+    updateLbl.configure(fg = "dark green")
+
+def get_status(msg, color = "black"):
+    updateLbl.config(text = msg)
+    updateLbl.configure(fg = color)
+    
+    
+def path_leaf(path):
+    head, tail = ntpath.split(path)
+    return tail or ntpath.basename(head)
+
+def set_inputs(_event = None):
+    global ref1, ref2, ref3, ref4, ref5, cell_references
+    
+    get_status("Applying Inputs Cells")
+    ref1 = allocTxt.get()
+    ref2 = taxCellTxt.get()
+    ref3 = timeTxt.get()
+    ref4 = assetTxt.get()
+    ref5 = numTxt.get()
+    
+    cell_references = {"ref1": allocTxt.get(), "ref2": taxCellTxt.get(), "ref3": timeTxt.get(), 
+                       "ref4": assetTxt.get(), "ref5": numTxt.get()}
+    
+    messagebox.showinfo("Input Cells", "New IPS input cells have been applied.")
+    append("New IPS input cells have been applied.", "success")
+    append("")
+    bottomBar.after(1500, ready)
+    
+def reset_db(_event = None):
+    
+    
+    saveYes = messagebox.askyesno("Reset Database", "Are you sure you wish to reset the database to its old default?")
+    if(saveYes):
+        
+        get_status("Resetting Database")
+        
+        db.set(defaultExcel)
+        try:
+            init_junxure_db()
+            messagebox.showinfo("Success", "Database successfully reset.")
+            append("Database successfully reset.", "success")
+            append("")
+        except:
+            messagebox.showinfo("Failure", "Database failed to reset.  Please restart the program immediately.")
+            append("Database reset failed.  Please restart the application immediately.", "error")
+            append("")
+            
+    else:
+        messagebox.showinfo("Cancelled", "Database was not reset.")
+
+#Used for button in Settings frame to save the Text settings for the paths and cell references
+def save_Settings(_event = None):
+    
+    global L, masterPath, flagPath, file_exists, excelDBPath, templatePath, defaultExcel, cell_references
+    global settingsPath
+    
+    #Sets up the initial master and flag path saved to the settings
+    if file_exists:
+        try:
+            cell_references = {"ref1": allocTxt.get(), "ref2": taxCellTxt.get(), "ref3": timeTxt.get(), 
+                       "ref4": assetTxt.get(), "ref5": numTxt.get()}
+            
+            f = open(settingsPath, "r+")
+            L[0] = "masterPath, " + str(masterTxt.get())
+            L[1] = "flagPath, " + str(flagTxt.get())
+            L[2] = "templatePath, " + str(templateTxt.get())
+            L[3] = "excelDBPath, " + str(excelTxt.get())
+            L[5] = "taxPath, " + str(taxTxt.get())
+            L[6] = "testIPS, " + str(tstVar.get())
+            
+            L[7] = "cell_references, "
+            for ref in cell_references.values():
+                L[7] += ref + ":"
+    
+            L[7] = L[7][0:len(L[7])-1]
+            print(L[7])
+        
+            saveYes = messagebox.askyesno("Save Settings", "Are you sure you want to save these settings for future use?")
+            
+            print(saveYes)
+            if saveYes:
+                get_status("Saving Settings")
+                try:
+                    db_name = excelDBPath.rpartition("\\")
+#                     backup_wb = load_workbook(excelDBPath)
+#                     backup_wb.save("P:\\Office\\Interns\\IPSProject\\" + db_name)
+#                     db_name = path_leaf(excelDBPath)
+                
+                    defaultExcel = shutil.copy(excelDBPath, create_path('ExcelDB', db_name[len(db_name)-1].replace(".xlsx", "- Backup.xlsx")))
+                    
+                except:
+                    get_status("Save Failed", "red")
+                    messagebox.showerror("Database Copy Error", "There was an issue with the path to your IPS Excel Database.")
+                    m = re.search("\\\s*\.xlsx", excelDBPath)
+                    print("About to print m")
+                    print(m)
+                    if m:
+                        print(m.group(1))
+                    print(db_name)
+                    defaultExcel = create_path('ExcelDB','IPSTestDB.xlsx')
+                    
+                L[4] = "defaultExcel, " + str(defaultExcel)
+                print(L[4])
+                
+                f.writelines("%s\n" % l for l in L)
+                
+                
+                masterPath = L[0].replace("masterPath, ", "")
+                masterPath = masterPath.replace("\n", "")
+
+                flagPath = L[1].replace("flagPath, ", "")
+                flagPath = flagPath.replace("\n", "")
+
+                templatePath = L[2].replace("templatePath, ", "")
+                templatePath = masterPath.replace("\n", "")
+
+                excelDBPath = L[3].replace("excelDBPath, ", "")
+                excelDBPath = excelDBPath.replace("\n", "")
+                    
+                taxPath = L[4].replace("taxPath, ", "")
+                taxPath = taxPath.replace("\n", "")
+
+                tstVar.set(tstVar.get())
+                append("Settings saved successfully." "success")
+                bottomBar.after(1500, ready)
+                
+            else:
+                append("Save was cancelled.")
+            
+        finally:
+            f.close()
+        
+        
+    else:
+        get_status("Rebuilding Settings File")
+        # do something else
+        try:
+            f = open(settingsPath, "w")
+            L[0] = "masterPath, " + str(masterTxt.get())
+            L[1] = "flagPath, " + str(flagTxt.get())
+            L[2] = "templatePath, " + str(templateTxt.get())
+            L[3] = "excelDBPath, " + str(excelTxt.get())
+            L[5] = "taxPath, " + str(taxTxt.get())
+            L[6] = "testIPS, " + str(tstVar.get())
+            
+            L[7] = "cell_references, "
+            for ref in cell_references.values():
+                L[7] += ref + ":"
+    
+            L[7] = L[7][0:len(L[7])-1]
+            print(L[7])
+            
+            saveYes = messagebox.askyesno("Save Settings", "Are you sure you want to save these settings for future use?")
+            
+            if saveYes:
+                
+                try:
+                    db_name = path_leaf(excelDBPath)
+                    defaultExcel = shutil.copy(excelDBPath, create_path('ExcelDB', db_name))
+                except:
+                    messagebox.showerror("Database Copy Error", "There was an issue with the path to your IPS Excel Database.")
+                    append("Database Copy Error: There is an issue with your IPS Excel Database Path.", "error")
+                    append("")
+                    append("The IPS Excel Database backup has been set to '{}'".format(defaultExcel))
+                    append("")
+                    defaultExcel = create_path('ExcelDB','IPSTestDB.xlsx')
+                    
+                L[4] = "defaultExcel, " + str(defaultExcel)
+                
+                print(L[4])
+                f.writelines("%s\n" % l for l in L)
+
+                masterPath = L[0].replace("masterPath, ", "")
+                masterPath = masterPath.replace("\n", "")
+
+                flagPath = L[1].replace("flagPath, ", "")
+                flagPath = flagPath.replace("\n", "")
+
+                templatePath = L[2].replace("templatePath, ", "")
+                templatePath = masterPath.replace("\n", "")
+
+                excelDBPath = L[3].replace("excelDBPath, ", "")
+                excelDBPath = excelDBPath.replace("\n", "")
+
+                taxPath = L[4].replace("taxPath, ", "")
+                taxPath = taxPath.replace("\n", "")
+
+                tstVar.set(tstVar.get())
+                append("Settings saved successfully.", "success")
+                bottomBar.after(1500, ready)
+                
+            else:
+                append("Save was cancelled.")
+        finally:
+            f.close()
+
+#Function for the Log
+def append(msg, tag = "normal"):
+    output1.tag_config('success', foreground='green')
+    output1.tag_config('error', foreground='red') # <-- Sets msg with a tag 'error' to be red
+    output1.configure(state='normal')
+    output1.insert(tk.END, msg + '\n', tag) # <-- Insert tagged message into Log
+    output1.configure(state='disabled')
+    # Autoscroll to the bottom
+    output1.yview(tk.END)
+
+#Initializes the junxure excel data file to formatted Pandas dataframe
+def init_junxure_db(_event = None):
+    global IPSWorkbook, TaxWorkbook, excelDBPath
+    global junxure_df, companyfiles,client_file, record_id, combined_file, directory_df, tax_status_df
+    
+    try:
+        get_status("Initializing Database")
+        IPSWorkbook = pd.read_excel(excelDBPath)
+
+        junxure_df = pd.DataFrame(IPSWorkbook, columns = ['IPS_Date_Signed', 'IPS','A_Account_Number','A_Custodian',
+                                                          'Asset_Name','A_Financial_Account_Type', 'UIRecordID', 
+                                                          'Record_Name', 'VMNAF_Required', 'A_Group', 'IPS_Required'])
+
+#         junxure_df = junxure_df.apply(lambda x: x['A_Account_Number'].astype(str).upper())
+
+        junxure_df["UIRecordID"] = junxure_df["UIRecordID"].astype(str)
+        custodian = junxure_df['A_Custodian'].astype(str)
+
+        companyfiles = create_path('TestClients')
+        client_file = os.listdir(companyfiles)
+        record_id = [i.split('-')[-1] for i in client_file]
+        combined_file = {'Client_File':client_file, 'UIRecordID':record_id}
+
+        directory_df = pd.DataFrame(combined_file, columns=['Client_File', "UIRecordID"])
+        junxure_df = pd.merge(junxure_df, directory_df, on='UIRecordID', how='left', sort=False)
+        tax_status_df = pd.DataFrame(TaxWorkbook, columns = ['A_Financial_Account_Type', 'Tax_Status'])   
+        junxure_df = pd.merge(junxure_df, tax_status_df, on='A_Financial_Account_Type', how='left', sort=False)
+
+        append("The IPS Excel Database has successfully been initialized to '" + excelDBPath + "'.")
+        append("")
+    except:
+        get_status("Database Failure", "red")
+        append("IPS Excel Database may be corrupted.  Please restart application and reset database.", "error")
+        append("")
+        messagebox.showerror("IPS Excel Database Error", "IPS Excel Database Failed to Initialize Properly")
+        bottomBar.after(3500, not_ready)
+        return
+    bottomBar.after(2000, ready)
+        
+    
+def init_Settings():
+    
+    global L, masterPath, flagPath, file_exists, excelDBPath, templatePath, defaultExcel
+    global TaxWorkbook, template_wb, ws1, ref1, ref2, ref3, ref4, ref5
+    global settingsPath
+    
+    #Sets up the initial master and flag path saved to the settings
+    if file_exists:
+        try:
+            get_status("Initializing Settings")
+            
+            f = open(settingsPath, "r")
+            L = f.readlines()
+            masterPath = L[0].replace("masterPath, ", "")
+            flagPath = L[1].replace("flagPath, ", "")
+            templatePath = L[2].replace("templatePath, ", "")
+            excelDBPath = L[3].replace("excelDBPath, ", "")
+            defaultExcel = L[4].replace("defaultExcel, ", "")
+            print(defaultExcel)
+            taxPath = L[5].replace("taxPath, ", "")
+            tvar = L[6].replace("testIPS, ", "")
+            references = L[7].replace("cell_references, ", "")
+            print(ref1)
+            for i in ('ref1', 'ref2', 'ref3','ref4', 'ref5'):
+                if ":" in references:
+                    globals()[i] = references[0:references.index(":")]
+                    references = references[references.index(":")+1:len(references)]
+                else:
+                    globals()[i] = references
+            
+            masterPath = masterPath.replace("\n", "")
+            flagPath = flagPath.replace("\n", "")
+            templatePath = templatePath.replace("\n", "")
+            excelDBPath = excelDBPath.replace("\n", "")
+            defaultExcel = defaultExcel.replace("\n", "")
+            taxPath = taxPath.replace("\n", "")
+            tvar = tvar.replace("\n", "")
+            references = references.replace("\n","")
+            
+            print(excelDBPath)
+            masterTxt.delete('0', END)
+            masterTxt.insert('0', masterPath)
+            r.set(masterPath)
+            
+            flagTxt.delete('0', END)
+            flagTxt.insert('0', flagPath)
+            fp.set(flagPath)
+            
+            templateTxt.delete('0', END)
+            templateTxt.insert('0', templatePath)
+            db.set(excelDBPath)
+            
+            excelTxt.delete('0', END)
+            excelTxt.insert('0', excelDBPath)
+            db.set(excelDBPath)
+            
+            taxTxt.delete('0', END)
+            taxTxt.insert('0', taxPath)
+            tp.set(taxPath)
+           
+            tstVar.set(int(tvar))
+            
+            check_Ticker() 
+            
+            init_junxure_db()
+            
+            TaxWorkbook = pd.read_excel(taxPath)
+            template_wb = load_workbook(templatePath)
+            ws1 = template_wb.active
+            
+            allocExcel.set(ref1)
+            allocTxt.delete('0', END)
+            allocTxt.insert('0', ref1)
+            
+            taxExcel.set(ref2)
+            taxCellTxt.delete('0', END)
+            taxCellTxt.insert('0', ref2)
+            
+            timeExcel.set(ref3)
+            timeTxt.delete('0', END)
+            timeTxt.insert('0', ref3)
+            
+            assetExcel.set(ref4)
+            assetTxt.delete('0', END)
+            assetTxt.insert('0', ref4)
+            
+            numExcel.set(ref5)
+            numTxt.delete('0', END)
+            numTxt.insert('0', ref5)
+            
+            append("The Tax ID Workbook has been initialized to '" + taxPath + "'.")
+            append("")
+            
+            fname = pathlib.Path(excelDBPath)
+            ctime = datetime.fromtimestamp(fname.stat().st_ctime)
+            ctimeStr = ctime.strftime("%Y-%m-%d (%H:%M)")
+            
+            dbLastUpdateLbl.configure(text = "Excel Database last updated: " + ctimeStr)
+            
+            if "Excel Database last updated: 01/01/1900" == dbLastUpdateLbl.cget("text"):
+                dbLastUpdateLbl.configure(fg = "red")
+            bottomBar.after(2000, ready)
+        except:
+            get_status("Settings Failure", "red")
+            bottomBar.after(3500, not_ready)
+            append("Settings.txt file is corrupt.  Please delete the file ('{}') and restart the application.".format(settingsPath), "error")
+            append("")
+            messagebox.showerror("Settings File Error", "Please delete '{}' and restart application.".format(settingsPath))
+            
+        finally:
+            f.close()
+        
+    else:
+        # do something else
+        try:
+            get_status("Writing Settings File")
+            f = open(settingsPath, "w")
+            f.writelines("%s\n" % l for l in L)
+            bottomBar.after(2000, ready)
+        finally:
+            f.close()
+    
+
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.environ.get("_MEIPASS2",os.path.abspath("."))
+
+    return os.path.join(base_path, relative_path)
+
+"""##https://stackoverflow.com/questions/4205996/tkinter-python-how-do-remove-the-input-cursor-from-a-ttk-entry
+class MyEntry(Entry):
+
+    def disable(self):
+        self.__old_insertontime = self.cget('insertontime')
+        self.config(insertontime=0)
+        self.bind('<Key>', lambda e: 'break')
+
+    def enable(self):
+        self.unbind('<Key>')
+        if self.cget('insertontime') == 0:
+            self.config(insertontime=self.__old_insertontime)        
+"""
+class Table: 
+      
+    def __init__(self,root): 
+          
+        # code for creating table 
+        for i in range(total_rows): 
+            for j in range(total_columns): 
+                  
+                self.e = Entry(root, width=20, fg='blue', 
+                               font=('Arial',16,'bold')) 
+                  
+                self.e.grid(row=i, column=j) 
+                self.e.insert(END, lst[i][j]) 
+                
+class MyOptionMenu(OptionMenu):
+    def __init__(self, master, status, *options):
+        self.var = StringVar(master)
+        self.var.set(status)
+        OptionMenu.__init__(self, master, self.var, *options, command=self.get)
+        self.config(font=('calibri',(10)),bg='white',width=5)
+        self['menu'].config(font=('calibri',(10)),bg='white')
+    
+    def get(self, var):
+        return var
+    
+        
+class PlaceholderEntry(ttk.Entry):
+    def __init__(self, container, placeholder, insertion = None, *args, **kwargs):
+        super().__init__(container, *args, style="Placeholder.TEntry", **kwargs)
+        self.placeholder = placeholder
+        
+        if insertion != None:
+            print("init insertion")
+            self.insertion = insertion
+            self.insert_insertion(e = None)
+            print(self["style"])
+        else:
+            self.insert("0", self.placeholder)
+            
+        self.bind("<FocusIn>", self._clear_placeholder)
+        self.bind("<FocusOut>", self._add_placeholder)
+    
+#     def delete(start = 0, end = 'END')
+#         self.delete(start, end)
+    
+    def insert_insertion(self, e):
+        print("In insertion")
+        self._clear_placeholder(e = None)
+        self.insert("0", self.insertion)
+
+        print(self.insertion + "'s style is " + self["style"])
+            
+    def _clear_placeholder(self, e):
+        if self["style"] == "Placeholder.TEntry":
+            self.delete("0", "end")
+            self["style"] = "TEntry"
+
+    def _add_placeholder(self, e):
+        if not self.get():
+            self.insert("0", self.placeholder)
+            self["style"] = "Placeholder.TEntry"
+    
+
+
+count = 1
+newLines = 0
+menuList = []
+frames = {} #Dictionary with keys 
+            #initialized to menu Names and frames of each menu item
+    
+root = tk.Tk()
+root.title("IPS Automatron")
+root.geometry('800x500')
+
+def has_focus(widget):
+    if root.focus_get() == widget:
+        return True
+    return False
+
+def createFlagColumn(output_df, data_dict):
+    
+    df = pd.DataFrame.from_dict(data_dict, orient='index')
+    df.reset_index(inplace=True)
+    df = df.rename(columns = {'index':'A_Account_Number', 0:'Flag'})
+    
+    output_df = pd.merge(output_df, df, on='A_Account_Number', how='left', sort=True)
+    
+    return output_df
+    
+            
+            
+def define_search(_event=None):
+
+    quickAddLbl.config(text = "Enter the " + sel.get() + " you would like to generate.", font = 'Helvetica 9 italic')
+
+def openSearch(event = None):
+    query = str(acctSearch.get())
+    
+    get_status("Searching")
+    reset_progress()
+    
+    openSearchWindow(query)
+    search(window = 1)
+
+def cleanChoices(query_list, choices):
+    
+    new_choices = []
+    
+    for query in query_list:
+        
+        for row in choices:
+            row = str(row)
+            
+            if query.lower() in row.lower():
+                new_choices.append(row)
+                
+    temp_df = pd.DataFrame(new_choices, columns = ['Temp'])
+    new_choices = temp_df['Temp'].unique().tolist()
+   
+    return new_choices
+    
+def search(event = None, window = 0):
+    
+    if window == 1:
+        query = str(acctSearch.get())
+    else:
+        query = str(acctSearchnw.get())
+        
+        #Updates acctSearch to match the window Quick-Search's acctSearchnw field
+        acctSearch.insertion = acctSearchnw.get()
+        acctSearch.delete(0, 'end')
+        acctSearch.insert_insertion(e = None)
+
+    if sel.get() == "Account Name":
+        
+        col = 'Asset_Name'
+        
+        chunks = query.split(' ')
+        
+        choices = junxure_df[col].unique().tolist()
+        
+#         new_choices = cleanChoices(chunks, choices)
+       
+        
+        results = process.extractBests(query, choices, scorer=fuzz.token_set_ratio, score_cutoff = 90, limit = 1000)
+#         append(str(results))
+        
+    elif sel.get() == "Client Name":
+        
+        col = 'Record_Name'
+        
+        choices = junxure_df[col].unique().tolist()
+        
+
+        
+        results = process.extractBests(query, choices, scorer=fuzz.token_set_ratio, score_cutoff = 80, limit = 1000)
+#         append(str(results))
+    elif sel.get() == "Account Number":
+        
+        col = 'A_Account_Number'
+        
+        choices = junxure_df[col].unique().astype(str).tolist()
+    
+#         print("CHOICES: " + str(choices))
+        results = process.extractBests(query, choices, scorer=partial_ratio, score_cutoff = 80, limit = 1000)
+#         append(str(results))
+        
+    results_df = pd.DataFrame(results,columns=[col, "Score"])
+
+    
+    search_results_df = setResults(results_df, col)
+    NumOfOptions = search_results_df.shape[0]
+    append('Search for ' +  '"' + query + '"')
+    
+    
+    resultsLblnw.configure(text = str(NumOfOptions) + ' Results for ' + '"' + query + '".')
+    
+    updateTreeview(search_results_df, 1)
+    
+    append("Found " + str(NumOfOptions) + " options from your search.")
+    append("")
+    
+def setResults(results, col):
+    
+    get_status("Searching")
+    temp = junxure_df
+    
+    temp[col] = junxure_df[col].astype(str)
+    
+    temp['IPS_Date_Signed'].fillna("NULL", inplace = True)
+    
+    results_df = pd.merge(results, temp, on=col, how='left', sort=True)
+
+    results_df = results_df.sort_values(by='Score', ascending = False)
+    return results_df
+    
+def generate_Acct(_event = None):
+    tab = generateNotebook.index(generateNotebook.select())
+    get_status("Starting Account Generation")
+    if tab == 0:
+        progressLbl.pack(side = tk.LEFT)
+        progressBar.pack(side = tk.LEFT)
+        generate_Multi()
+        progressLbl.after(4000, reset_progress)
+        progressBar.after(4000, reset_progress)
+        
+    else:
+        progressLbl.pack(side = tk.LEFT)
+        progressBar.pack(side = tk.LEFT)
+        generate_Single()
+        progressLbl.after(4000, reset_progress)
+        progressBar.after(4000, reset_progress)
+        
+def check_missing_accts(df, accounts_df):
+    get_status("Checking for Missing Accounts")
+    all_accts = df['A_Account_Number'].tolist()
+    gen_accounts = accounts_df['A_Account_Number'].tolist()
+    
+    false_acct = []
+    for acct in all_accts:
+        if acct not in gen_accounts:
+            false_acct.append(acct)
+    
+    list_str = ""
+    for i in range(len(false_acct)):
+        if i == len(false_acct)-1:
+            list_str += false_acct[i]
+        else:
+            list_str += false_acct[i] + ", "
+    
+    if list_str != "":        
+        append("You entered the following incorrect accounts: " + list_str, "error")
+        messagebox.showerror("Error", "You entered " + str(len(false_acct)) + " incorrect accounts")
+    
+#Generates the list of IPS's the user inputs based on account number
+def generate_Multi(call_from = "Default", acct_num = 0):
+    
+    global report, success, failure, acct_report
+    global ipsCount, ipsTotal
+    
+    ipsCount = 0
+    ipsTotal = 0
+    
+    if (filter1.size() > 0) & (call_from == "Default"):
+        df = pd.DataFrame(filter1.get(0,filter1.size()-1),columns = ['A_Account_Number']).astype(str)
+        
+        master_file_path = masterPath
+        
+        accounts_df = combine(df)
+        
+        try:
+            ipsTotal = accounts_df.shape[0]
+            accounts_df.progress_apply(lambda row: save_IPS(row['A_Account_Number'], row['Asset_Name'], row['Client_File'], row['Tax_Status'], row['A_Custodian'], row['IPS'], row['VMNAF_Required'], row['A_Group'], row['IPS_Required'], tax_status_df, master_file_path), axis=1)
+        except:
+            append("Application Error: Please reset application", "error")
+            append("")
+            bottomBar.after(500, not_ready)
+            
+            messagebox.showerror("Error Code 1", "Error: No Valid Accounts in the list pushed.")
+            return
+        
+        if (report[0] == 0) & (report[1] == 0):
+            #Error 1
+            append("No Valid Accounts in the list pushed.", "error")
+            append("")
+            messagebox.showerror("Error Code 1", "Error: No Valid Accounts in the list pushed.")
+            return
+  
+        
+        check_missing_accts(df, accounts_df)
+        
+    elif call_from == "quick_Generate":
+        df = pd.DataFrame([acct_num],columns = ['A_Account_Number']).astype(str)
+            
+        master_file_path = masterPath
+        
+        accounts_df = combine(df)
+        
+        ipsTotal = accounts_df.shape[0]
+        accounts_df.progress_apply(lambda row: save_IPS(row['A_Account_Number'], row['Asset_Name'], row['Client_File'], row['Tax_Status'], row['A_Custodian'], row['IPS'], row['VMNAF_Required'], row['A_Group'], row['IPS_Required'], tax_status_df, master_file_path), axis=1)  
+        
+    else:
+        #Error 3
+        append("No Accounts Selected", "error")
+        messagebox.showerror("Error", "Error 3")
+        
+    if (report[0] == 0) & (report[1] == 0):
+        #Error 2
+        append("No Valid Accounts in the list pushed.", "error")
+        messagebox.showerror("Error Code: 2", "Error: No Valid Accounts from the search pushed.")
+        return
+#         print("Report" + str(report[0]))
+    append("")
+
+    ## if and elif correcting for grammar
+    if (report[1] != 1) and (report[0] != 1):
+        append("Generated " + str(report[0]) + " successful accounts.  There were " + str(report[1]) + " flags raised.")
+    elif (report[1] == 1) and (report[0] != 1):
+        append("Generated " + str(report[0]) + " successful accounts.  There was " + str(report[1]) + " flag raised.")
+    elif (report[1] != 1) and (report[0] == 1):
+        append("Generated " + str(report[0]) + " successful account.  There were " + str(report[1]) + " flags raised.")
+    else:
+        append("Generated " + str(report[0]) + " successful account.  There was " + str(report[1]) + " flag raised.")
+    if not testIPS:
+        append(str(report[0]) + " out of " + str(report[0] + report[1]) + " were generated to the respective client's folder.")
+    success = 0
+    failure = 0
+    report = [success, failure]
+    accounts_df = createFlagColumn(accounts_df, acct_report)
+
+    updateTreeview(accounts_df, window = 2)
+    bottomBar.after(2000, ready)
+    append("")
+    
+def generate_Single():
+    
+    global noSel, masterPath, record, client_Path, directory_df, testIPS
+    
+    alloc = str(allocation.var.get())
+    tax_status = str(taxable.var.get())
+    asset_name = str(assetName.get())
+    asset_name = fix_illegal_char(asset_name)
+    acct_num = str(acctNum.get())
+    
+    last_four = parse_last_four(acct_num)
+    last_four_str = last_four.replace("X" or "-","")
+    
+    time_horizon = set_time_horizon(alloc)
+    
+    if last_four != "INVALID":
+        get_status("Generating Account")
+        try:
+            set_IPS_template(alloc, tax_status, time_horizon, asset_name, last_four)
+        except:
+            bottomBar.after(2000, not_ready)
+            append("FLAGGED: Invalid Excel Cell Reference(s).  Check program settings.")
+            
+        
+        #asset_name = check_asset_name(asset_name, last_four, acct_num, alloc)
+        asset_name = fix_illegal_char(asset_name)
+        f_name = today_str + "-IPS " + asset_name + " " + last_four_str
+        master_file_path = masterPath
+        excel_file_path  = masterPath
+
+        template_wb.save(excel_file_path + f_name +'.xlsx') #MAKE SURE template_wb is created
+        
+        get_status("Converting IPS to PDF")
+        convert_to_PDF(f_name, excel_file_path, master_file_path)
+        
+        answer = messagebox.askyesno("New Account","Is this IPS For a New Account?")
+        
+        # If the answer is a new account, get Record Name
+        if answer == True:
+            
+           
+            #chooseRecordName()
+            
+#             record = sel
+
+            record = simpledialog.askstring("Record Name", "Enter the last name of the Client.",
+                                parent=root)
+            get_status("Matching Record")
+            match_Record(record)
+            
+            ## FIX THIS TO GENERATE TO CLIENTPATH IF APPROPRIATE (NEED THE APPLICATION TO PAUSE UNTIL USER FINISHES SELECTION)
+            if client_Path == "":
+                print("CLIENT PATH NULL")
+                print(record[0])
+                
+                junxure_df['Found'] = junxure_df['Record_Name'].str.find(str(record[0]))
+                record_Path = junxure_df[junxure_df['Found'] != -1]['Client_File'].tolist()[0]
+                
+                print(junxure_df[['Record_Name','Client_File','Found']])
+                print(record_Path)
+                
+                client_folder_path = create_path('TestClients')
+                
+                if "/" in client_folder_path:
+                    client_file_path = client_folder_path + '/' + record_Path + "/IPS/Drafts/"
+                else:
+                    client_file_path = client_folder_path + '\\\\' + record_Path + "\\\\IPS\\\\Drafts\\\\"
+                
+                if not testIPS:
+                    convert_to_PDF(f_name, excel_file_path, client_file_path)
+                    
+                df = pd.DataFrame([record[0], asset_name, acct_num, "No Date"],columns = ['Items']).astype(str)
+                updateTreeview(df, window = 2, partial = True)
+                
+            else:
+                print(record)
+                df = pd.DataFrame([record, asset_name, acct_num, "No Date"],columns = ['Items']).astype(str)
+                updateTreeview(df, window = 2, partial = True)
+                record_Path = ""
+            
+        #Check against other accounts for information to fill in for Treeview (i.e. get the Record Name automatically)    
+        else:
+            df = pd.DataFrame([acct_num],columns = ['A_Account_Number']).astype(str)
+            accounts_df = combine(df)
+            
+            updateTreeview(accounts_df, window = 2)
+            check_missing_accts(df, accounts_df)
+        
+    else:
+        #Error4
+        append("Dialog Prompt Invalid IPS Single Generation", "error")
+        messagebox.showerror("Error", "Error 4")
+    
+    bottomBar.after(1500, ready)  
+    append(msg = "Generated an account with " + alloc + " allocation that is " + tax_status + " called " + asset_name + ", Account #" + acct_num) 
+#     append(msg ="TAX: " + tax_status)
+#     append(msg ="ASSET NAME: " + asset_name)
+#     append(msg ="ACCOUNT NUMBER: " + acct_num)
+        
+#NOT BEING USED ANYMORE
+def set_Width(event):
+    tab = generateNotebook.index(generateNotebook.select())
+    if tab == 1:
+        generateNotebook.configure(width = 360)
+    else:
+        generateNotebook.configure(width = 400)
+        
+#Makes current frame invisible to allow for new frame to be pushed to top
+def reset_grid(frame):
+    global isSettings
+    global ref1, ref2, ref3, ref4, ref5
+    
+    #Used to Apply Settings when a new frame is raised after the Settings Frame
+    if isSettings:
+        
+        #Checks to see if User made changes to Input Cells
+        if (ref1 != allocTxt.get()) or (ref2 != taxCellTxt.get()) or (ref3 != timeTxt.get()) or (ref4 != assetTxt.get()) or (ref5 != numTxt.get()):
+            
+            applyYes = None
+            
+            while applyYes is None:
+                applyYes = messagebox.askyesno("Apply Cells", "Would you like to apply the cell reference changes to the IPS Template?")
+                print("IN LOOP, APPLY YES IS " + str(applyYes))
+                if applyYes:
+                    set_inputs()
+                else:
+                    print(str(applyYes) + " is applyYes")
+                    set_cells()
+            
+            isSettings = False
+            print("OUT OF LOOP, isSettings IS " + str(isSettings))
+    
+    for F in frames:
+        if frame == F:
+            frames[F].pack(side=tk.TOP, fill=tk.X)
+        
+        else:
+            frames[F].pack_forget()
+         
+
+#Removes all selected items in ListBox when user hits 'Backspace'       
+def pop(event = None):
+    sel = filter1.curselection()
+    for index in sel[::-1]:
+        filter1.delete(index)
+
+def chooseRecord(event = None):
+    global sel
+    
+    selected = treev.focus()
+    
+    values = treev.item(selected, 'values')
+    
+    sel = values[0]
+    noSel = False
+    
+    reset_rwindow_count()
+    
+
+#Removes everything from list box
+def clear_All():
+    filter1.delete(0, tk.END)
+    
+## Pushes all distinct account numbers typed in Text to Listbox
+def push(_event=None):
+    global count, newLines
+    equals = False
+    
+#     if newLines > 0:
+#         newLines = text.get(str(newLines) + ".0", END).count('\n')
+#         res = text.get(str(newLines) + ".0", END)
+#     else:
+#         newLines = text.get("1.0", END).count("\n" )
+#         res = text.get("1.0", END)
+#         print(res)
+        
+    for ndex, line in enumerate(text.get(1.0, "end-1c").splitlines()):
+        equals = False
+
+        if filter1.size() > 0:
+            for fline in filter1.get(0, filter1.size()-1):
+                if line.upper() == fline.upper():
+                    equals = True
+                    break
+        if equals == False:
+            filter1.insert(ndex, line.upper())
+    
+#     if filter1.size() >= 1:
+#         filter1.insert(END, res)
+#     else:
+#         filter1.insert(ndex, res)
+#         print("Here")
+
+
+    count += 1
+
+    #If 'Enter' hits, same as pressing btn
+    
+def on_entry_click(event):
+    """function that gets called whenever entry is clicked"""
+    if entry.cget('fg') == 'grey':
+        assetName.delete(0, END) # delete all the text in the entry
+        assetName.insert(0, '') #Insert blank for user input
+        assetName.config(fg = 'black')
+        
+def on_focusout(event):
+    if assetName.get() == '':
+        assetName.insert(0, 'Enter Asset Name...')
+        assetName.config(fg = 'grey')
+        
+def raise_frame(frame):
+                
+    frame.tkraise()
+
+#Preps to change the Frame based on what Lbl user clicks in SideMenu
+def prep(event):
+    
+    global isSettings
+    
+    for lbl in menuList:
+        lbl.config(bg = 'white')
+    frame = event.widget.cget("text")
+    print(frame)
+    
+    #Used to Apply Settings when a new frame is raised after the Settings Frame
+    if frame == "Settings":
+      
+        isSettings = True
+        print("ISSETTINGS " + str(isSettings))
+    reset_grid(frame)
+    raise_frame(frames[frame])
+
+    
+    event.widget.config(bg='light blue')
+    event.widget.focus_set()  # give keyboard focus to the label
+
+def check_Ticker(_event = None):
+    
+    global testIPS
+    
+    if mstrVar.get() == 1:
+        masterTxt.configure(state = 'normal')
+        masterBtn["state"] = 'normal'
+        masterBtn.configure(bg = "#5D6D7E")
+    elif mstrVar.get() == 0:
+        masterTxt.configure(state = 'disabled')
+        masterBtn["state"] = 'disabled'
+        masterBtn.configure(bg = "#D6DBDF")
+       
+        
+    if tstVar.get() == 1:
+        testIPS = False  
+    elif tstVar.get() == 0:
+        testIPS = True
+        
+        
+    if flagVar.get() == 1:
+        flagTxt.configure(state = 'normal')
+        flagBtn["state"] = 'normal'
+        flagBtn.configure(bg = "#5D6D7E")
+    elif flagVar.get() == 0:
+        flagTxt.configure(state = 'disabled')
+        flagBtn["state"] = 'disabled'
+        flagBtn.configure(bg = "#D6DBDF")
+       
+    
+#     if templateVar.get() == 1:
+        
+#     elif templateVar.get() == 0:
+        
+        
+    if excelVar.get() == 1:
+        excelTxt.configure(state = 'normal')
+        excelBtn["state"] = 'normal'
+        excelBtn.configure(bg = "#f44336")
+    elif excelVar.get() == 0:
+        excelTxt.configure(state = 'disabled')
+        excelBtn["state"] = 'disabled'
+        excelBtn.configure(bg = "#FADBD8")
+        
+        
+    if taxVar.get() == 1:
+        taxTxt.configure(state = 'normal')
+        taxBtn["state"] = 'normal'
+        taxBtn.configure(bg = "#f44336")
+    elif taxVar.get() == 0:
+        taxTxt.configure(state = 'disabled')
+        taxBtn["state"] = 'disabled'
+        taxBtn.configure(bg = "#FADBD8")
+        
+    if excelInputVar.get() == 1:
+        allocTxt.configure(state = 'normal')
+        taxCellTxt.configure(state = 'normal')
+        timeTxt.configure(state = 'normal')
+        assetTxt.configure(state = 'normal')
+        numTxt.configure(state = 'normal')
+        templateTxt.configure(state = 'normal')
+        templateBtn["state"] = 'normal'
+        templateBtn.configure(bg = "#f44336")
+       
+        
+        excelInputBtn["state"] = 'normal'
+        excelInputBtn.configure(bg = "#f44336")
+        
+    elif excelInputVar.get() == 0:
+        allocTxt.configure(state = 'disabled')
+        taxCellTxt.configure(state = 'disabled')
+        timeTxt.configure(state = 'disabled')
+        assetTxt.configure(state = 'disabled')
+        numTxt.configure(state = 'disabled')
+        
+        templateTxt.configure(state = 'disabled')
+        templateBtn["state"] = 'disabled'
+        templateBtn.configure(bg = "#FADBD8")
+        
+        excelInputBtn["state"] = 'disabled'
+        excelInputBtn.configure(bg = "#FADBD8")
+    
+       
+
+def set_Flag(_event = None):
+    global flagPath
+    if flagVar.get() == 0:
+        return
+    else:
+    
+        flag_dir = filedialog.askdirectory()
+
+        flagPath = str(flag_dir).replace("/", "\\") + "\\"
+        flagTxt.delete('0', END)
+        flagTxt.insert('0', flagPath)
+
+        if flagTxt.get() == "\\":
+
+            flagTxt.delete('0', END)
+            flagTxt.insert('0', defaultFlag)
+            
+    #If 'Enter' hits, same as pressing btn
+def set_Master(_event=None):
+    global masterPath
+    if mstrVar.get() == 0:
+        return
+    else:
+    
+        master_dir = filedialog.askdirectory()
+
+        masterPath = str(master_dir).replace("/", "\\") + "\\"
+        masterTxt.delete('0', END)
+        masterTxt.insert('0', masterPath)
+
+        if masterTxt.get() == "\\":
+
+            masterTxt.delete('0', END)
+            masterTxt.insert('0', defaultMstr)
+    #If 'Enter' hits, same as pressing btn
+
+def set_Template(_event=None):
+    global templatePath, template_wb
+    if templateVar.get() == 0:
+        return
+    else:
+        get_status("Configuring IPS Template")
+        template_dir = filedialog.askopenfilename()
+        
+        templatePath = str(template_dir).replace("/", "\\")
+        
+        if ".xlsx" not in templatePath:
+            excelTxt.delete('0', END)
+            excelTxt.insert('0', defaultTemplate)
+            messagebox.showerror("Error", "Please choose the valid IPS Excel Template filepath with a '.xlsx' extension")
+        else:
+            excelTxt.delete('0', END)
+            excelTxt.insert('0', excelDBPath)
+            IPSWorkbook = pd.read_excel(excelDBPath)
+            messagebox.showinfo("Template Updated", "The IPS Excel template path has been updated.")
+            append("The IPS Excel template has been updated to '" + excelDBPath + "'.")    
+
+def set_Excel(_event=None):
+    global excelDBPath, IPSWorkbook
+    if excelVar.get() == 0:
+        return
+    else:
+        get_status("Configuring IPS Database")
+        excel_dir = filedialog.askopenfilename()
+        
+        excelDBPath = str(excel_dir).replace("/", "\\")
+        
+        if ".xlsx" not in excelDBPath:
+            excelTxt.delete('0', END)
+            excelTxt.insert('0', defaultExcel)
+            messagebox.showerror("Error", "Please choose the valid IPS Excel Database filepath with a '.xlsx' extension")
+        else:
+            excelTxt.delete('0', END)
+            excelTxt.insert('0', excelDBPath)
+            IPSWorkbook = pd.read_excel(excelDBPath)
+            messagebox.showinfo("Tax ID's Updated", "The IPS Excel database path has been updated.")
+            append("The IPS Excel database has been updated to '" + excelDBPath + "'.")
+
+    #If 'Enter' hits, same as pressing btn
+    
+def set_Tax(_event=None):
+    global taxPath
+    if taxVar.get() == 0:
+        return
+    else:
+        get_status("Configuring Tax ID Workbook")
+        tax_dir = filedialog.askopenfilename()
+        
+        taxPath = str(tax_dir).replace("/", "\\")
+        
+        if ".xlsx" not in excelDBPath:
+            taxTxt.delete('0', END)
+            taxTxt.insert('0', defaultTax)
+            messagebox.showerror("Error", "Please choose the valid Tax ID Workbook filepath with a '.xlsx' extension")
+        else:
+            excelTxt.delete('0', END)
+            excelTxt.insert('0', taxPath)
+            TaxWorkbook = pd.read_excel(taxPath)
+            messagebox.showinfo("Tax ID Workbook", "The Tax ID Workbook path has been updated.")
+            append("The Tax ID Workbook has been updated to '" + taxPath + "'.")
+            
+#BOTTOM BAR
+bottomBar = tk.Frame(root, bd=1, relief=tk.SUNKEN)
+bottomBar.pack(side=tk.BOTTOM, fill=tk.X, ipady = 3, ipadx = 7)
+
+dbFrame = tk.Frame(bottomBar, relief = tk.SUNKEN, bd = 1)
+dbFrame.pack(side=tk.LEFT, fill = tk.BOTH)
+
+dbLastUpdateLbl = tk.Label(dbFrame, text = "Excel Database last updated: 01/01/1900")
+dbLastUpdateLbl.pack(side=tk.LEFT, fill=tk.BOTH)
+
+#progressFrame = tk.Frame(bottomBar, width = 220, bg = "red").pack(side=tk.RIGHT, padx = 10, fill=BOTH)
+
+statusFrame = tk.Frame(bottomBar)
+statusFrame.pack(side=tk.LEFT, fill = tk.BOTH)
+
+
+statusLbl = tk.Label(statusFrame, text = "Status: ")
+statusLbl.pack(side=tk.LEFT)
+
+updateLbl = tk.Label(statusFrame, text = "Ready")
+updateLbl.pack(side=tk.LEFT)
+
+updateFrame = tk.Frame(bottomBar)
+updateFrame.pack(side=tk.RIGHT, fill = tk.BOTH)
+
+progressLbl = tk.Label(updateFrame)
+
+progressBar = ttk.Progressbar(updateFrame, orient = HORIZONTAL, length = 200, mode = 'determinate')
+
+
+#SIDEMENU FRAME
+sideMenu = tk.Frame(root, bg = "white", borderwidth = 5, relief = "ridge", width = 200, height = 100)
+sideMenu.pack(side=tk.TOP, fill=tk.X)
+
+dashboard = tk.Label(sideMenu, text = "Home", bg ="light blue")
+generate = tk.Label(sideMenu, text = "Generate", bg = "white")
+accountInfo = tk.Label(sideMenu, text = "Account Info", bg = "white")
+settings = tk.Label(sideMenu, text = "Settings", bg = "white")
+
+menuList = [dashboard, generate, accountInfo, settings]
+
+dashboard.pack(side=tk.LEFT, fill=tk.Y)
+generate.pack(side=tk.LEFT, fill=tk.Y)
+accountInfo.pack(side=tk.LEFT, fill=tk.Y)
+settings.pack(side=tk.LEFT, fill=tk.Y)
+
+#Change Button Focus
+dashboard.bind('<Button-1>', prep)
+generate.bind('<Button-1>', prep)
+accountInfo.bind('<Button-1>', prep)
+settings.bind('<Button-1>', prep)
+
+#DASHBOARD FRAME
+dashboardFrame = tk.Frame(root)
+dashboardFrame.pack(side=tk.RIGHT, fill=tk.BOTH)
+
+frames['Home'] = dashboardFrame  #Append to the frames Dictionary
+
+dashlbl = tk.Label(dashboardFrame, text = "This is the Dashboard")
+dashlbl.grid(sticky="nsew")
+
+###############
+#GENERATE FRAME
+###############
+generateFrameParent = tk.Frame(root)
+generateFrameParent.pack(side=tk.RIGHT, fill=tk.BOTH)
+generateNotebook = ttk.Notebook(generateFrameParent, width = 400)
+generateNotebook.grid(column = 2, row = 0, pady = 5, padx=10, sticky = "w")
+
+frames['Generate'] = generateFrameParent  #Append to the frames Dictionary
+
+#generateNotebook.bind("<Button-1>", set_Width)
+
+##########
+#Multi IPS
+generateFrame1 = tk.Frame(generateNotebook, bg = "#f5e5c1")
+generateFrame1.grid(column=0, row=0, rowspan=5)
+
+generateNotebook.add(generateFrame1, text = "Multi-IPS")
+
+text = scrolledtext.ScrolledText(generateFrame1, width = 20, height =5)
+text.grid(column = 1, row = 2, columnspan =2, rowspan = 5, padx = 10)
+
+# txtEnter = 
+# txtEnter.grid(column = 1, row = 2, columnspan =2, rowspan = 5)
+
+filter1 = tk.Listbox(generateFrame1, width = text.cget("width")*2-14, height = text.cget("height"), selectmode=tk.EXTENDED)
+filter1.grid(column = 3, row = 2, columnspan =2, rowspan = 5, padx = 20)
+
+filter1.bind('<BackSpace>', pop)
+filter1.bind('<Delete>', pop)
+
+generateLbl1 = tk.Label(generateFrame1, text = "Enter List of Account Numbers",font='Helvetica 10 bold', fg = "black", bg = "#f5e5c1")
+generateLbl1.grid(column = 1, row =0, columnspan = 2, pady = 8, sticky ="n")
+
+generateLbl2 = tk.Label(generateFrame1, text = "Accounts to Generate", font='Helvetica 10 bold', fg = "black", bg = "#f5e5c1")
+generateLbl2.grid(column = 3, row =0, columnspan = 2, pady = 8, sticky ="n")
+
+pushAcctBtn = tk.Button(generateFrame1, text = 'Push Accounts', command = push, bg = "#884EA0", fg = "white")
+pushAcctBtn.grid(column = 1, row = 8, columnspan= 2, pady = 5, sticky = "s")
+
+removeBtn = tk.Button(generateFrame1, text = 'Remove Selected', bg = "#CB4335",
+               fg = "white", command = pop)
+removeBtn.grid(column = 3, row = 8, pady = 5, sticky = "s")
+
+clearBtn = tk.Button(generateFrame1, text = 'Clear All', bg = "#CB4335",
+               fg = "white", command = clear_All)
+clearBtn.grid(column = 4, row = 8, pady = 5, sticky = "s")
+
+###########
+#Single IPS
+generateFrame2 = tk.Frame(generateNotebook, bg = "#f5e5c1")
+generateFrame2.grid(column=1, row=0, rowspan=5)
+
+style = ttk.Style(generateFrame2)
+style.configure("Placeholder.TEntry", foreground="grey")
+
+generateNotebook.add(generateFrame2, text = "Single-IPS")
+
+allocLbl = tk.Label(generateFrame2, text = "Account Allocation: ", bg = "#63223c", fg = "white")
+allocLbl.grid(column = 0, row =1,  pady = 10, padx = 5, sticky ="nw")
+taxStatLbl = tk.Label(generateFrame2, text = "Tax Status: ", bg = "#63223c", fg = "white")
+taxStatLbl.grid(column = 0, row =2, padx = 5, sticky ="nw")
+assetLbl = tk.Label(generateFrame2, text = "Asset Name:", bg = "#63223c", fg = "white")
+assetLbl.grid(column = 0, row =3, padx = 5, sticky ="nw")
+acctNumLbl = tk.Label(generateFrame2, text = "Account #:", bg = "#63223c", fg = "white")
+acctNumLbl.grid(column = 0, row =4, padx = 5, sticky ="nw")
+
+AllocOptions = ["SELECT", "20/80", "30/70", "40/60", "50/50", "60/40", "70/30", "80/20", "90/10", "100/0"]
+variable = StringVar(generateFrame2)
+variable.set(AllocOptions[0]) # default value
+
+allocation = MyOptionMenu(generateFrame2, AllocOptions[0], *AllocOptions)
+allocation.config(width=10)
+allocation.grid(column = 2, row = 1, pady =10, sticky = "e")
+
+TaxOptions = ["SELECT", "Taxable", "Non-Taxable"]
+variable = StringVar(generateFrame2)
+variable.set(TaxOptions[0]) # default value
+
+taxable = MyOptionMenu(generateFrame2, TaxOptions[0], *TaxOptions)
+taxable.config(width=10)
+taxable.grid(column = 2, row = 2, sticky = "e")
+
+assetName = PlaceholderEntry(generateFrame2, "Enter Asset Name Here...", takefocus = 0, width = 42)
+assetName.grid(column = 2, row = 3, pady = 10, sticky = "e")
+
+acctNum = PlaceholderEntry(generateFrame2, "Enter Account # Here...", takefocus = 0, width = 42)
+acctNum.grid(column = 2, row = 4, sticky = "e")
+
+##########
+#Quick-Add
+
+# orLbl = tk.Label(generateFrameParent, text = "OR")
+# orLbl.grid(column = 3, row = 0, pady = 5, padx=10)
+
+quickAddNotebook = ttk.Notebook(generateFrameParent, width = "310")
+quickAddNotebook.grid(column = 3, row = 0, pady = 5, padx=10, sticky = "nw", rowspan = 6)
+
+quickAdd = Frame(quickAddNotebook)
+quickAdd.grid(column=0, row=0, rowspan=5)
+quickAdd1 = Frame(quickAdd)
+quickAdd1.pack()
+quickAdd2 = Frame(quickAdd)
+quickAdd2.pack()
+
+quickAddNotebook.add(quickAdd, text = "Quick-Add")
+
+quickAddLbl = tk.Label(quickAdd1, text = "Enter the Account Name you would like to generate.", font = 'Helvetica 9 italic') #Add in the ability to generate IPS by asset name only
+quickAddLbl.grid(column = 0, row = 0, pady = 5, padx=5, sticky = "N")
+
+
+sel = StringVar()
+sel.set("Account Name")
+accountNameOption = Radiobutton(quickAdd2, text = "Account\nName", variable = sel, value = "Account Name", command = define_search)
+accountNameOption.grid(column = 0, row = 0, pady = 5, padx = 10, sticky ="w")
+clientNameOption = Radiobutton(quickAdd2, text = "Client\nName", variable = sel, value = "Client Name", command = define_search)
+clientNameOption.grid(column = 1, row = 0, pady = 5, padx = 10, sticky = "w")
+accountNumOption = Radiobutton(quickAdd2, text = "Account\nNumber", variable = sel, value = "Account Number", command = define_search)
+accountNumOption.grid(column = 2, row = 0, pady = 5, padx = 10, sticky = "w")
+
+acctSearch = PlaceholderEntry(quickAdd2, "Quick Search...", takefocus = 0, width = 42)
+acctSearch.grid(column = 0, row = 1, columnspan = 3, pady = 5, sticky = "n")
+
+myFont = font.Font(family = "Courier New TUR", size = 10, weight = "bold")
+myFont2_12 = font.Font(family = "calibri", size = 12, weight = "bold")
+myFont2_10 = font.Font(family = "calibri", size = 10, weight = "bold")
+
+searchBtn = tk.Button(quickAdd2, text = 'SEARCH', command = openSearch)
+searchBtn.grid(column = 0, row = 2, pady = 10, columnspan = 3, sticky = "s")
+searchBtn['font'] = myFont
+
+acctSearch.bind('<Return>', openSearch)
+
+# quickAddLbl2 = tk.Label(quickAdd, text = "Other") #Add in the ability to generate IPS by asset name only
+# quickAddLbl2.grid(column = 0, row = 2, pady = 5, padx=10, sticky = "N")
+
+##########
+#Buttons
+
+buttonFrame = Frame(generateFrameParent)
+buttonFrame.grid(column = 3, row = 1, columnspan = 2, pady = 5, padx = 18, rowspan = 5, sticky = "E")
+
+# img = PhotoImage(file = r'D:\Users\kofg_intern4\Downloads\The_Million_Dollar_Homepage.ppm')
+# picture = tk.Label(buttonFrame, image=img, width = 200, height = 200)
+# picture.grid(column = 0, row = 0)
+
+
+generateIPSBtn = tk.Button(buttonFrame, text = "Generate IPS", command = generate_Acct, width = 20, height = 2, bg = '#1261A0', fg ='White')
+generateIPSBtn.grid(column = 0, row = 0, pady = 10)
+generateIPSBtn['font'] = myFont2_10
+
+generateTempBtn = tk.Button(buttonFrame, text = "Generate Letter", command = generate_Acct, width = 20, height = 2, bg = '#1261A0', fg ='White')
+generateTempBtn.grid(column = 0, row = 1, pady = 10)
+generateTempBtn['font'] = myFont2_10
+
+
+
+
+
+
+#########
+#Table
+tableNotebook = ttk.Notebook(generateFrameParent, width = 550, height = 200)
+tableNotebook.grid(column = 2, row = 1, pady = 5, columnspan = 3, rowspan = 5, padx=10, sticky ="w") #Change ColumnSpan
+
+log = Frame(tableNotebook)
+log.grid(column=1, row=0, rowspan=5)
+
+accountOutput = Frame(tableNotebook)
+accountOutput.grid(column=1, row=0, rowspan=5)
+
+tableNotebook.add(log, text = "Log")
+tableNotebook.add(accountOutput, text = "Accounts Generated")
+
+output1 = scrolledtext.ScrolledText(log)
+output1.pack()
+
+# output2 = scrolledtext.ScrolledText(accountOutput)
+# output2.pack()
+
+acctOutputTree = ttk.Treeview(accountOutput, selectmode ='browse') 
+
+# Calling pack method w.r.to treeview 
+acctOutputTree.pack(side = LEFT, fill = X) 
+
+# Constructing vertical scrollbar 
+# with treeview 
+acctverscrlbar = ttk.Scrollbar(accountOutput,  
+                           orient ="vertical",  
+                           command = acctOutputTree.yview) 
+accthorscrlbar = ttk.Scrollbar(accountOutput,  
+                           orient ="horizontal",  
+                           command = acctOutputTree.xview) 
+
+# Calling pack method w.r.to verical  
+# scrollbar 
+acctverscrlbar.pack(side = RIGHT, fill = Y)
+# accthorscrlbar.grid(column = 1, row = 1)
+
+# Configuring treeview 
+acctOutputTree.configure(yscrollcommand = acctverscrlbar.set) 
+acctOutputTree.configure(xscrollcommand = acctverscrlbar.set) 
+
+# Defining number of columns 
+acctOutputTree["columns"] = ( "1","2", "3", "4", "5", "6") 
+
+# Defining heading 
+acctOutputTree['show'] = 'headings'
+
+# Assigning the width and anchor to  the 
+# respective columns 
+acctOutputTree.column("1", width = 100, minwidth = 25, anchor ='c') 
+acctOutputTree.column("2", width = 130, minwidth = 25, anchor ='se') 
+acctOutputTree.column("3", width = 90, minwidth = 25, anchor ='se')
+acctOutputTree.column("4", width = 45, minwidth = 25, anchor ='se')
+acctOutputTree.column("5", width = 75, minwidth = 25, anchor ='c')
+acctOutputTree.column("6", width = 90, minwidth = 25, anchor ='c')
+
+# Assigning the heading names to the  
+# respective columns 
+acctOutputTree.heading("1", text ="Client Name") 
+acctOutputTree.heading("2", text ="Asset Name") 
+acctOutputTree.heading("3", text ="Account #")
+acctOutputTree.heading("4", text ="Status")
+acctOutputTree.heading("5", text ="Signed Date")
+acctOutputTree.heading("6", text ="Generated Date")
+
+output1.configure(state="disabled")
+
+#ACCOUNTINFO FRAME
+acctInfoFrame = tk.Frame(root)
+acctInfoFrame.pack(side=tk.RIGHT, fill=tk.BOTH)
+
+frames['Account Info'] = acctInfoFrame  #Append to the frames Dictionary
+
+#SETTINGS FRAME
+settingsFrame = tk.Frame(root)
+settingsFrame.pack(side=tk.RIGHT, fill=tk.BOTH)
+
+
+frames['Settings'] = settingsFrame  #Append to the frames Dictionary
+
+r = tk.StringVar()
+r.set(masterPath)
+
+fp = tk.StringVar()
+fp.set(flagPath)
+
+tmp = tk.StringVar()
+tmp.set(templatePath)
+
+db = tk.StringVar()
+db.set(excelDBPath)
+
+tp = tk.StringVar()
+tp.set(taxPath)
+
+masterLbl = tk.Label(settingsFrame, text = "Master Folder: ")
+masterTxt = tk.Entry(settingsFrame, width = 70, textvariable = r)
+masterBtn = tk.Button(settingsFrame, text = 'Set Filepath',bg = "#D6DBDF",
+               fg = "white", command = set_Master)
+
+
+tstVar =IntVar()
+tstVar.set(1)
+
+clientChk = Checkbutton(settingsFrame, variable=tstVar, text = "Generate to Client Folder", 
+                        onvalue = 1, offvalue = 0, command = check_Ticker)
+clientChk.grid(column = 0, row = 0, pady = 10)
+clientChk.bind('<Button-1>', check_Ticker)
+
+flagLbl = tk.Label(settingsFrame, text = "Flag Folder: ")
+flagTxt = tk.Entry(settingsFrame, width = 70, textvariable = fp)
+flagBtn = tk.Button(settingsFrame, text = 'Set Filepath',bg = "#D6DBDF",
+               fg = "white", command = set_Flag)
+
+flagVar = IntVar(settingsFrame)
+flagVar.set(0)
+flagCheckLbl = tk.Label(settingsFrame, text = "Flag" + str(flagVar.get()))
+
+flagChk = Checkbutton(settingsFrame, variable=flagVar, onvalue = 1, offvalue = 0, command = check_Ticker)
+flagChk.grid(column = 0, row = 3, pady = 10)
+
+flagLbl.grid(column = 1, row = 3, rowspan = 2, padx = 5, pady = 10)
+flagTxt.grid(column = 2, row = 3, columnspan = 2, rowspan = 2, padx = 5, pady = 10)
+flagBtn.grid(column = 4, row = 3, rowspan = 2, pady = 10)
+# flagCheckLbl.grid(column = 4, row = 3, rowspan = 2, pady = 10)
+flagBtn['state'] = 'disabled'
+flagTxt.configure(state = 'disabled')
+flagTxt.bind('<Return>', set_Flag)
+
+flagChk.bind('<Button-1>', check_Ticker)
+
+mstrVar = IntVar()
+mstrVar.set(0)
+
+masterChk = Checkbutton(settingsFrame, variable=mstrVar, onvalue = 1, offvalue = 0, command = check_Ticker)
+masterChk.grid(column = 0, row = 1, pady = 10)
+
+masterLbl.grid(column = 1, row = 1, rowspan = 2, padx = 5, pady = 10)
+masterTxt.grid(column = 2, row = 1, columnspan = 2, rowspan = 2, padx = 5, pady = 10)
+masterBtn.grid(column = 4, row = 1, rowspan = 2, pady = 10)
+masterBtn['state'] = 'disabled'
+
+excelVar = IntVar()
+excelVar.set(0)
+
+excelChk = Checkbutton(settingsFrame, variable=excelVar, onvalue = 1, offvalue = 0, command = check_Ticker)
+excelChk.grid(column = 0, row = 7, pady = 10)
+
+excelLbl = tk.Label(settingsFrame, text = "Excel Database: ")
+excelTxt = tk.Entry(settingsFrame, width = 70, textvariable = db)
+excelBtn = tk.Button(settingsFrame, text = 'Set Database', bg = "#FADBD8",
+               fg = "white", command = set_Excel)
+
+excelLbl.grid(column = 1, row = 7, rowspan = 2, padx = 5, pady = 10)
+excelTxt.grid(column = 2, row = 7, columnspan = 2, rowspan = 2, padx = 5, pady = 10)
+excelBtn.grid(column = 4, row = 7, rowspan = 2, pady = 10)
+excelBtn['state'] = 'disabled'
+
+excelTxt.configure(state = 'disabled')
+
+taxVar = IntVar()
+taxVar.set(0)
+
+taxChk = Checkbutton(settingsFrame, variable=taxVar, onvalue = 1, offvalue = 0, command = check_Ticker)
+taxChk.grid(column = 0, row = 9, pady = 10)
+
+taxLbl = tk.Label(settingsFrame, text = "Tax ID Workbook: ")
+taxTxt = tk.Entry(settingsFrame, width = 70, textvariable = tp)
+taxBtn = tk.Button(settingsFrame, text = 'Set Tax Path', bg = "#FADBD8",
+               fg = "white", command = set_Tax)
+
+taxLbl.grid(column = 1, row = 9, rowspan = 2, padx = 5, pady = 10)
+taxTxt.grid(column = 2, row = 9, columnspan = 2, rowspan = 2, padx = 5, pady = 10)
+taxBtn.grid(column = 4, row = 9, rowspan = 2, pady = 10)
+taxBtn['state'] = 'disabled'
+
+taxTxt.configure(state = 'disabled')
+
+masterTxt.configure(state = 'disabled')
+masterTxt.bind('<Return>', set_Master)
+
+masterChk.bind('<Button-1>', check_Ticker)
+
+
+"""
+ws1['O5'] = alloc_str
+ws1['O6'] = tax_status
+ws1['O8'] = time_horizon
+ws1['O12'] = asset_name
+ws1['O14'] = last_four
+"""
+
+inputFrame = tk.Frame(settingsFrame, relief = tk.RIDGE, bd = 1, bg = "#f5e5c1")
+inputFrame.grid(column = 0, row = 11, columnspan = 5, rowspan =4, sticky = "E", padx = 40)
+
+excelInputVar = IntVar()
+excelInputVar.set(0)
+
+inputChk = Checkbutton(inputFrame, variable=excelInputVar, onvalue = 1, offvalue = 0, 
+                       bg = "#f5e5c1", command = check_Ticker)
+inputChk.grid(column = 0, row = 0, pady = 10)
+tempCellLbl = tk.Label(inputFrame, text = "IPS TEMPLATE INPUT CELLS", bg = "#c8bdbd",
+                       font=('Arial',12,'bold'), borderwidth=2, relief="groove")
+tempCellLbl.grid(column = 1, row = 0, columnspan = 8, pady = 10)
+
+excelInputBtn = tk.Button(inputFrame, text = 'Apply Cells', bg = "#FADBD8",
+               fg = "white", command = set_inputs)
+excelInputBtn.grid(column = 9, row = 0, columnspan = 2, pady = 10, padx = 10)
+excelInputBtn['state'] = 'disabled'
+
+allocExcelLbl = tk.Label(inputFrame, text = "Allocation", font=('Arial',10,'italic'), bg = "#f5e5c1")
+allocExcelLbl.grid(row = 1, column = 0, columnspan = 2, padx = 30, pady =5)
+taxExcelLbl = tk.Label(inputFrame, text = "Tax Status", font=('Arial',10,'italic'), bg = "#f5e5c1")
+taxExcelLbl.grid(row = 1, column = 2, columnspan = 2, padx = 30, pady =5)
+timeExcelLbl = tk.Label(inputFrame, text = "Time Horizon", font=('Arial',10,'italic'), bg = "#f5e5c1")
+timeExcelLbl.grid(row = 1, column = 4, columnspan = 2, padx = 30, pady =5)
+assetExcelLbl = tk.Label(inputFrame, text = "Asset Name", font=('Arial',10,'italic'), bg = "#f5e5c1")
+assetExcelLbl.grid(row = 1, column = 6, columnspan = 2, padx = 30, pady =5)
+numExcelLbl = tk.Label(inputFrame, text = "Acct. Number", font=('Arial',10,'italic'), bg = "#f5e5c1")
+numExcelLbl.grid(row = 1, column = 8, columnspan = 2, padx = 30, pady =5)
+
+allocExcel = tk.StringVar()
+allocExcel.set(ref1)
+taxExcel = tk.StringVar()
+taxExcel.set(ref2)
+timeExcel = tk.StringVar()
+timeExcel.set(ref3)
+assetExcel = tk.StringVar()
+assetExcel.set(ref4)
+numExcel = tk.StringVar()
+numExcel.set(ref5)
+
+allocTxt = tk.Entry(inputFrame, width = 4, textvariable = allocExcel)
+taxCellTxt = tk.Entry(inputFrame, width = 4, textvariable = taxExcel)
+timeTxt = tk.Entry(inputFrame, width = 4, textvariable = timeExcel)
+assetTxt = tk.Entry(inputFrame, width = 4, textvariable = assetExcel)
+numTxt = tk.Entry(inputFrame, width = 4, textvariable = numExcel)
+
+cell_references = {"ref1": allocTxt.get(), "ref2": taxCellTxt.get(), "ref3": timeTxt.get(), "ref4": assetTxt.get(), "ref5": numTxt.get()}
+
+
+allocTxt['state'] = 'disabled'
+taxCellTxt['state'] = 'disabled'
+timeTxt['state'] = 'disabled'
+assetTxt['state'] = 'disabled'
+numTxt['state'] = 'disabled'
+
+allocTxt.grid(row = 2, column = 0, columnspan = 2, padx = 30, pady =5)
+taxCellTxt.grid(row = 2, column = 2, columnspan = 2, padx = 30, pady =5)
+timeTxt.grid(row = 2, column = 4, columnspan = 2, padx = 30, pady =5)
+assetTxt.grid(row = 2, column = 6, columnspan = 2, padx = 30, pady =5)
+numTxt.grid(row = 2, column = 8, columnspan = 2, padx = 30, pady =5)
+
+templateVar = IntVar()
+templateVar.set(0)
+
+# templateChk = Checkbutton(inputFrame, variable=templateVar, onvalue = 1, offvalue = 0, command = check_Ticker)
+# templateChk.grid(column = 0, row = 3, pady = 10)
+
+templateLbl = tk.Label(inputFrame, text = "IPS Template: ", font=('Arial',10,'bold'), bg = "#f5e5c1")
+templateTxt = tk.Entry(inputFrame, width = 70, textvariable = tmp)
+templateBtn = tk.Button(inputFrame, text = 'Set Template', bg = "#FADBD8",
+               fg = "white", command = set_Template)
+
+templateLbl.grid(column = 0, row = 3, rowspan = 2, columnspan =2, padx = 5, pady = 10)
+templateTxt.grid(column = 2, row = 3, columnspan = 6, rowspan = 2, padx = 5, pady = 10)
+templateBtn.grid(column = 9, row = 3, rowspan = 2, pady = 10)
+templateBtn['state'] = 'disabled'
+
+templateTxt.configure(state = 'disabled')
+
+"""SAVE AREA"""
+saveBtn =  tk.Button(settingsFrame, text = 'Save Settings', bg = "#008CBA",
+               fg = "white", command = save_Settings)
+saveBtn.grid(column = 1, row = 15, pady = 10)
+defaultBtn =  tk.Button(settingsFrame, text = 'Default Settings', bg = "#008CBA",
+               fg = "white", command = reset_Settings)
+defaultBtn.grid(column = 2, row = 15, pady = 10, padx = 10, sticky = "e")
+defaultExcelBtn =  tk.Button(settingsFrame, text = 'Reset Database', bg = "#008CBA",
+               fg = "white", command = reset_db)
+defaultExcelBtn.grid(column = 3, row = 15,pady = 10, padx = 10, sticky = "e")
+
+
+# resetJunxBtn =  tk.Button(settingsFrame, text = 'Reset Junxure_DF', bg = "#008CBA",
+#                fg = "white", command = init_junxure_db)
+# resetJunxBtn.grid(column = 4, row = 11, rowspan = 2, pady = 10)
+
+
+# frame = tk.Frame(root)
+# frame.pack()
+
+# button = tk.Button(frame, text = "Geek")
+# button.pack()
+
+
+def combine(df):
+        global junxure_df
+        
+        try:
+            get_status("Merging Accounts")
+            df['A_Account_Number'] = df['A_Account_Number'].astype(str)
+            filter_df = pd.DataFrame(df, columns = ['A_Account_Number'])
+            junxure_df['A_Account_Number'] = junxure_df['A_Account_Number'].astype(str)
+
+            temp = pd.merge(junxure_df, filter_df, on='A_Account_Number', sort=True)
+
+            filter_list = df['A_Account_Number']
+
+            return temp
+        except:
+            messagebox.showerror("Merging Accounts Error", "There was an error with an account number passed.")
+            append("One or more of the passed accounts does not exist in the system.")
+        
+
+#Checks to see if account number and allocation are in asset name; fixes format for file name
+def check_asset_name(asset_name, last_four, acct_num, alloc):
+    
+    get_status("Checking Asset Name(s)")
+    if (str(re.search('\d{1,3}/\d{1,3}', asset_name))) is not None:
+        alloc_wrong = str(re.search('\d{1,3}/\d{1,3}', asset_name))
+        alloc_correct = alloc.replace("/", ".")
+                                      
+        asset_name = asset_name + alloc.replace(alloc_wrong, alloc_correct)
+                                      
+    elif (str(re.search('\d{1,3}\.\d{1,3}', asset_name))) is None:
+        asset_name = asset_name + alloc.replace("/", ".")
+        
+    if last_four not in asset_name:
+        if acct_num in asset_name:
+            asset_name = asset_name.replace(acct_num, last_four)
+        else:
+            asset_name = asset_name + " " + last_four
+    
+    return asset_name
+        
+def parse_last_four(account_number):    
+    #Partial hide account number on IPS and filename
+    get_status("Hiding Account Numbers")
+    last_four_numbers = (re.search("\d\d\d\d$", account_number))
+    #print(asset_name, last_four_numbers)
+    if last_four_numbers is not None:
+        if re.search("[A-Za-z]", account_number[-4:]) is not None:
+            acct_short = account_number[-5:]
+            last_four = "X"*(len(str(account_number))-5) + "-" + acct_short
+        else:
+            acct_short = account_number[-4:]
+            last_four = "X"*(len(str(account_number))-4) + "-" + acct_shortp
+        return last_four
+    else:
+        return "INVALID"
+        
+        
+#Sets the time horizon of IPS based on allocations (provided by Brandon)      
+def set_time_horizon(alloc_str):
+    get_status("Setting Time Horizon")   
+    if alloc_str == "20/80":
+        time_horizon = "Greater than 5 years"
+    elif alloc_str == "30/70":
+        time_horizon = "Greater than 6 years"
+    elif alloc_str == "40/60":
+        time_horizon = "Greater than 7 years"
+    elif alloc_str == "50/50":
+        time_horizon = "Greater than 8 years"
+    elif alloc_str == "60/40":
+        time_horizon = "Greater than 9 years"
+    else:
+        time_horizon = "Greater than 10 years"
+    
+    return time_horizon
+
+def set_IPS_template(alloc_str, tax_status, time_horizon, asset_name, last_four):
+    get_status("Inputing IPS Template Values")
+     #Input account data into IPS template
+    try:
+        ws1[ref1] = alloc_str
+        ws1[ref2] = tax_status
+        ws1[ref3] = time_horizon
+        ws1[ref4] = asset_name
+        ws1[ref5] = last_four
+    except:
+        get_status("Cell Reference Error", "red")
+        append("ERROR: Invalid reference in one or more IPS Template Input Cells.  Please change the input cells to be a valid Excel cell reference.")
+        messagebox.showerror("Error", "Invalid reference in one or more IPS Template Input Cells.  Check your cell reference settings.")
+        
+
+illegal_char = ["\\", "/", "\t", ">", "<", ":", "?", "*", "\"","\n"]
+
+def fix_illegal_char(asset_name):
+    
+    #Fix path name if there is forward or backslash in name
+    for i in range(len(illegal_char)):
+        if illegal_char[i] in asset_name:
+            asset_name = asset_name.replace(illegal_char[i], "-")
+            
+    return asset_name
+def fix_alloc(IPS_alloc):
+    
+    if re.search("\d\d\.\d",IPS_alloc) is not None:
+        alloc_str = IPS_alloc + '0'
+        alloc_str = alloc_str.replace(".", "/")
+    elif IPS_alloc == "100":
+        alloc_str = IPS_alloc + '/0'
+    elif IPS_alloc == "0.1":
+        alloc_str = IPS_alloc + '00'
+        alloc_str = alloc_str.replace(".", "/")
+    else:
+        append("FLAGGED: IPS Allocation Does Not Exist")
+        alloc_str = "N/A"
+        
+    return alloc_str
+        
+def convert_to_PDF(fName, root_path, client_path):
+    
+    input_file = root_path + fName + '.xlsx'
+    #give your file name with valid path 
+    output_file = client_path + fName + '.pdf'
+    #give valid output file name and path
+    app = client.DispatchEx("Excel.Application")
+    app.Interactive = False
+    app.Visible |= False
+    Workbook = app.Workbooks.Open(input_file)
+    try:
+        Workbook.ActiveSheet.ExportAsFixedFormat(0, output_file)
+    except Exception as e:
+        messagebox.showerror("Error", "Failed to convert in PDF format.Please confirm environment meets all the requirements  and try again")
+        print(str(e))
+    finally:
+        Workbook.Close()
+        app.Quit()
+
+##UPDATE 2.2: IPS allocation added as a parameter
+def save_IPS(acct_num, asset_name, client_file, tax_status, custodian, ips_alloc, vmnaf_req, group_type, ips_req, tax_df, filepath = 'P:\\Office\Interns\\IPSProject\\IPSTestGeneration\\'):
+    global flag_list
+    global success, failure
+    global ipsCount, ipsTotal
+    global report, acct_report, flagPath, masterPath
+    
+    bottomBar.update()
+    show_progress(ipsCount, ipsTotal, update = False)
+    
+    ipsCount += 1
+    
+    print(ipsCount/ipsTotal)
+    
+    get_status("Generating IPS")
+    
+    flag_found = False
+    alloc_found = 0
+    
+    IPS_alloc = str(ips_alloc)
+    isVMNAF = str(vmnaf_req).lower()
+    a_group = str(group_type)
+    ips_req = str(ips_req).lower()    
+    account_number = str(acct_num)
+    asset_name = str(asset_name)
+    asset_name = fix_illegal_char(asset_name)
+    client_file = str(client_file)
+    tax_status = str(tax_status)
+    custodian = str(custodian)
+    acct_short = ""
+    last_four = "XXXX-" + acct_short
+    flag = ["(CLOSED)", "(SURRENDERED)", "No Allocation -"]
+    
+    continueYes = True
+    
+    #Checks to see if the account requires an IPS
+    if(isVMNAF == 'yes') or (a_group in ['BD', 'INS','Outside Asset']) or (ips_req == 'no'):
+        continueYes = messagebox.askyesno("IPS Not Required", "The application detected an IPS is not required for '" + asset_name +"'. Would you like to still like to create an IPS for the account?")
+        flag_found = True
+        append("FLAGGED: The account '" + asset_name + "' was detected as not requiring an IPS.\t" + account_number)
+        
+    if (continueYes):
+        print("inside continueYes")
+        #Partial hide account number on IPS and filename
+        last_four_numbers = (re.search("\d\d\d\d$", account_number))
+        #print(asset_name, last_four_numbers)
+        if last_four_numbers is not None:
+            acct_short = account_number[-4:]
+            last_four = "X"*(len(str(account_number))-4) + "-" + acct_short
+        else: last_four = custodian
+
+        ##UPDATE 3: Uses the 'IPS' column by default to get the allocation
+        #Change IPS Allocation to match excel formula
+        if (str(re.search('\d{1,3}\.\d{1,3}', asset_name)))[-7:-2] is not None:
+
+            allocation_format = '\d{1,3}\.\d{1,3}'
+            allocation = (str(re.search(allocation_format, asset_name)))[-7:-2]
+            alloc_str = allocation.replace(".", "/")
+
+            alloc_found = 1
+
+        ##UPDATE 3.1: If the 'IPS' column has a value, then check if it matches one of the cases below and correct the format
+        if alloc_found == 0:
+            alloc_str = fix_alloc(IPS_alloc)
+
+        if fix_alloc(IPS_alloc) != alloc_str:
+            flag_found = True
+            print("Flag Found 2 ", flag_found)
+            append("FLAGGED: Junxure's IPS Column does not match the asset's IPS allocation: " + asset_name + "\t" + account_number)
+
+        #alloc_str = re.sub('\.', '/', allocation.findall(str(df.loc[i, "Asset_Name"]))[0])
+
+        #Flags accounts with no allocation
+        if ips_alloc != "No" and ips_alloc != 'N/A':
+            asset_name = asset_name
+        else: 
+            asset_name = "No Allocation - " + asset_name
+            append("FLAGGED: Asset may not have an IPS allocation")
+            flag_found = True
+
+        #If the A_Financial_Account_Type is 'Other', checks to see if the Account Type in the name matches
+        #with the tax_status_df; otherwise the account should be flagged
+        if tax_status == "Not_Tax_Identifiable":
+            #print(asset_name, "was other")
+            for i in tax_df.index:
+                if str(tax_df['A_Financial_Account_Type'][i]) in asset_name:
+                    tax_status = tax_df['Tax_Status'][i]
+                    #print("new tax status,", tax_status)
+                    break
+                else:
+                    flag_found = True
+                    print("Flag Found 5 ", flag_found)
+
+        #Choose whether invesment horizon is 5, 6, 7, 8, 9 or 10 plus years
+        time_horizon = set_time_horizon(alloc_str)
+        
+        try:
+            #Inputs the correct fields into correct cells of IPSTemplate.xlsx
+            set_IPS_template(alloc_str, tax_status, time_horizon, asset_name, last_four)
+        except:
+            bottomBar.after(2000, not_ready)
+            flag_found = True
+            append("FLAGGED: Invalid Excel Cell Reference(s).  Check program settings.")
+
+        f_name =  today_str + "-IPS " + asset_name + " " + acct_short
+        
+        client_folder_path = create_path('TestClients')
+                
+        if "/" in client_folder_path:
+            client_file_path = client_folder_path + '/' + record_Path + "/IPS/Drafts/"
+        else:
+            client_file_path = client_folder_path + '\\\\' + record_Path + "\\\\IPS\\\\Drafts\\\\"
+
+        # Defines path depending if we are running a test or running actual program
+        if(testIPS):
+            master_file_path = filepath
+        else:
+            master_file_path = masterPath
+
+        excel_file_path = filepath
+
+        master_file_name = master_file_path + f_name
+        client_file_name = client_file_path + f_name
+
+
+        #Saves to Flag Folder if error found
+        for i in range(len(flag)):
+            if flag[i] in asset_name:
+                #print(asset_name)
+                flag_found = True
+                append("FLAGGED: The ccount is closed, surrendered, or has no allocation")
+            if(flag_found):
+                flag_folder = flagPath + today_str + "-IPS " + asset_name + " " + acct_short
+                template_wb.save(flag_folder +'.xlsx')
+                append("Flag in {}, Acct. No. {}".format(asset_name, account_number), "error")
+                flag_list.append([asset_name, client_file_name, master_file_name])
+                failure += 1
+                break
+
+        #Outside of for loop: Saves to Master Path and Client Path if no flag found
+        if(not flag_found): 
+            #print(master_file_name)
+
+            template_wb.save(excel_file_path + f_name +'.xlsx')
+            success += 1
+            #Sends to client folder if 'testIPS' is FALSE
+            if(not testIPS):
+                ### template_wb.save(client_file_name +'.xlsx') ### SAFETY ###
+                if(setPDF):
+                    
+                    get_status("Converting IPS to PDF")
+                    convert_to_PDF(f_name, excel_file_path, master_file_path)
+                    convert_to_PDF(f_name, excel_file_path, client_file_path)
+
+        report = [success, failure]
+        acct_report[str(account_number)] = flag_found
+        print("Flag Found FINAL ", flag_found)
+        show_progress(ipsCount, ipsTotal, update = True)
+        
+        return report
+    
+    
+    #If continueYes chose 'No', no IPS will try to generate.
+    failure += 1
+    report = [success, failure]
+    print("Flag Found OUTSIDE FINAL ", flag_found)
+    
+    return report
+
+tqdm.pandas()
+##UPDATE 2.1: Added IPS allocation argument to first search 'IPS' row
+#df5.progress_apply(lambda row: save_IPS(row['A_Account_Number'], row['Asset_Name'], row['Client_File'], row['Tax_Status'], row['A_Custodian'], row['IPS'], tax_status_df), axis=1)
+#pd.set_option("display.max_rows", None, "display.max_columns", None)
+
+print("\nDONE")
+print("--- %s seconds ---" % (time.time() - start_time))
+
+######################################################################
+
+count = 0
+numOpen = 0
+numRecordOpen = 0
+
+def on_closing():
+    if messagebox.askokcancel("Quit", "Do you want to quit?"):
+        root.destroy()
+def reset_window_count():
+    global numOpen 
+    numOpen= 0
+    newWindow.destroy()
+
+def reset_rwindow_count():
+    global numRecordOpen 
+    numOpen= 0
+    newRecordWindow.destroy()
+def searchRecords(event = None):
+    col = 'Record_Name'
+        
+    choices = junxure_df[col].unique().tolist()
+    results = process.extractBests(query, choices, scorer=fuzz.token_set_ratio, score_cutoff = 80, limit = 1000)
+#     append(str(results))
+    
+    results_df = pd.DataFrame(results,columns=[col, "Score"])
+    
+    
+# def chooseRecordName():
+#     global numRecordOpen, filter1rw, noSel
+    
+#     numRecordOpen+=1
+    
+#     if numOpen == 1:
+        
+#         noSel = True
+        
+#         # Toplevel object which will  
+#         # be treated as a new window 
+#         newRecordWindow = Toplevel(root) 
+
+#         # sets the title of the 
+#         # Toplevel widget 
+#         newRecordWindow.title("Record Search") 
+
+#         # sets the geometry of toplevel 
+#         newRecordWindow.geometry("650x400") 
+
+#         # A Label widget to show in toplevel 
+
+#         quickAdd1rw = Frame(newRecordWindow)
+#         quickAdd1rw.pack()
+#         quickAdd2rw = Frame(newRecordWindow)
+#         quickAdd2rw.pack()
+#         quickAdd3rw = Frame(newRecordWindow)
+#         quickAdd3rw.pack()
+#         buttonsFramerw = Frame(newRecordWindow)
+#         buttonsFramerw.pack()
+
+
+#         quickAddLblrw = tk.Label(quickAdd1rw, text = "Enter the Client Name for the record.", font = 'Helvetica 9 italic') #Add in the ability to generate IPS by asset name only
+#         quickAddLblrw.grid(column = 0, row = 0, pady = 5, padx=5, sticky = "N")
+
+#         acctSearchrw = PlaceholderEntry(quickAdd2rw, "Record Search...", takefocus = 0, width = 42)
+#         acctSearchrw.grid(column = 0, row = 1, rowspan = 2, columnspan = 2, pady = 5, padx = 15, sticky = "ne")
+#     #     acctSearch.delete("1.0", END)
+#     #     acctSearch.insert("1.0", query)
+
+#         myFont = font.Font(family = "Courier New TUR", size = 8, weight = "bold")
+
+#         searchBtnrw = tk.Button(quickAdd2rw, text = 'SEARCH', command = searchRecords)
+#         searchBtnrw.grid(column = 2, row = 1, pady = 5, padx = 7, rowspan = 2, columnspan = 1, sticky = "ne")
+#         searchBtnrw['font'] = myFont
+
+#         resultsLblrw = tk.Label(quickAdd2rw, text = "Results for " + query)
+#         resultsLblrw.grid(column = 0, row =3, columnspan = 3, pady = 5, padx = 10)
+
+#         acctSearchrw.bind('<Return>', searchRecords)
+        
+# #         filter1rw = tk.Listbox(quickAdd2rw, width = text.cget("width")*2-14, height = text.cget("height"), selectmode=tk.EXTENDED)
+# #         filter1rw.grid(column = 0, row = 4, columnspan =3, rowspan = 5, padx = 20, pady =12)
+        
+#         treevrw = ttk.Treeview(quickAdd3rw, selectmode ='browse') 
+
+#         # Calling pack method w.r.to treeview 
+#         treevrw.pack(side = LEFT) 
+
+#         # Constructing vertical scrollbar 
+#         # with treeview 
+#         verscrlbar = ttk.Scrollbar(quickAdd3rw,  
+#                                    orient ="vertical",  
+#                                    command = treev.yview) 
+
+#         # Calling pack method w.r.to verical  
+#         # scrollbar 
+#         verscrlbar.pack(side = RIGHT, fill = Y) 
+        
+#         # Configuring treeview 
+#         treevrw.configure(yscrollcommand = verscrlbar.set) 
+
+#         # Defining number of columns 
+#         treevrw["columns"] = ("1") 
+
+#         # Defining heading 
+#         treevrw['show'] = 'headings'
+
+#         # Assigning the width and anchor to  the 
+#         # respective columns 
+#         treevrw.column("1", width = 150, minwidth = 25, anchor ='c') 
+        
+
+#         # Assigning the heading names to the  
+#         # respective columns 
+#         treevrw.heading("1", text ="Client Name") 
+        
+#         selectBtnrw = tk.Button(buttonsFramenw, text = "Generate Selected", command = quick_generate,  bg = '#1261A0', fg ='White')
+#         selectBtnrw.grid(pady = 10)
+        
+#         treevrw.bind('<Return>', chooseRecord)
+        
+#         newRecordWindow.protocol("WM_DELETE_WINDOW", reset_rwindow_count)
+    
+# def set_Client(_event = None):
+#     if mstrVar.get() == 1:
+#         masterTxt.configure(state = 'normal')
+#         masterBtn["state"] = 'normal'
+#         masterBtn.configure(bg = "#5D6D7E")
+#     elif mstrVar.get() == 0:
+#         masterTxt.configure(state = 'disabled')
+#         masterBtn["state"] = 'disabled'
+#         masterBtn.configure(bg = "#D6DBDF")
+    
+def openClientRecord(records):
+
+    newClients = Toplevel(root) 
+    
+    # sets the title of the 
+    # Toplevel widget 
+    newClients.title("Client Records") 
+
+    # sets the geometry of toplevel 
+    newClients.geometry("420x250") 
+    
+    clientLbl = tk.Label(newClients, text = "Select the correct record if you see it, or check 'No Client'", font = 'Helvetica 9 italic') #Add in the ability to generate IPS by asset name only
+    clientLbl.grid(column = 0, row = 0, pady = 5, padx=5, sticky = "N")
+   
+    clientsList = tk.Listbox(newClients, width = text.cget("width")*2-14, height = text.cget("height"), selectmode=tk.SINGLE)
+    clientsList.grid(column = 0, row = 1, columnspan =2, rowspan = 5, padx = 20, pady = 20)
+    
+    def select_Client(_event = None):
+        global record, client_Path
+        
+        if clientVar.get() == 0:
+            sel = clientsList.curselection()
+            record = clientsList.get(sel)
+            print("Client Selected")
+            print(record)
+    
+        elif tstVar.get() == 1:
+            messagebox.showinfo("Record Selection", "Please select the client filepath where you would like to generate the IPS.")
+            client_dir = filedialog.askdirectory()
+            client_Path = str(client_dir).replace("/", "\\") + "\\"
+        
+        newClients.destroy()
+        newClients.update()
+    
+    
+    for ndex, line in enumerate(records):
+        clientsList.insert(ndex, line)
+    
+    selClientBtn = tk.Button(newClients, text = "Submit", command = select_Client)
+    selClientBtn.grid(column = 0, row = 6, padx = 5)
+    
+    clientVar = IntVar()
+    clientVar.set(0)
+    
+    clientRecordChk = Checkbutton(newClients, variable=clientVar, text = "No Client", onvalue = 1, offvalue = 0)
+    clientRecordChk.grid(column = 1, row = 6, padx = 5)
+    
+    root.wait_window(newClients)
+    
+def openSearchWindow(query): 
+    global searchBtnnw, acctSearchnw, treev, resultsLblnw 
+    global numOpen, newWindow
+    
+    numOpen+=1
+    
+    if numOpen == 1:
+        # Toplevel object which will  
+        # be treated as a new window 
+
+        # sets the title of the 
+        # Toplevel widget
+        newWindow = Toplevel(root) 
+        newWindow.title("Quick Search") 
+
+        # sets the geometry of toplevel 
+        newWindow.geometry("650x420") 
+
+        # A Label widget to show in toplevel 
+
+        quickAdd1nw = Frame(newWindow)
+        quickAdd1nw.pack()
+        quickAdd2nw = Frame(newWindow)
+        quickAdd2nw.pack()
+        quickAdd3nw = Frame(newWindow)
+        quickAdd3nw.pack()
+        buttonsFramenw = Frame(newWindow)
+        buttonsFramenw.pack()
+
+
+        quickAddLblnw = tk.Label(quickAdd1nw, text = "Enter the Account Name you would like to generate.", font = 'Helvetica 9 italic') #Add in the ability to generate IPS by asset name only
+        quickAddLblnw.grid(column = 0, row = 0, pady = 5, padx=5, sticky = "N")
+
+
+        selnw = StringVar()
+        selnw.set("Account Name")
+        accountNameOptionnw = Radiobutton(quickAdd2nw, text = "Account\nName", variable = sel, value = "Account Name", command = define_search)
+        accountNameOptionnw.grid(column = 0, row = 0, pady = 5, padx = 10, sticky ="w")
+        clientNameOptionnw = Radiobutton(quickAdd2nw, text = "Client\nName", variable = sel, value = "Client Name", command = define_search)
+        clientNameOptionnw.grid(column = 1, row = 0, pady = 5, padx = 10, sticky = "w")
+        accountNumOptionnw = Radiobutton(quickAdd2nw, text = "Account\nNumber", variable = sel, value = "Account Number", command = define_search)
+        accountNumOptionnw.grid(column = 2, row = 0, pady = 5, padx = 10, sticky = "w")
+
+        acctSearchnw = PlaceholderEntry(quickAdd2nw, "Quick Search...", query, takefocus = 0, width = 42)
+        acctSearchnw.grid(column = 0, row = 1, rowspan = 2, columnspan = 2, pady = 5, padx = 15, sticky = "ne")
+        acctSearchnw.focus()
+        
+#         acctSearch.delete(0, END)
+#         acctSearch.insert(0, query)
+
+        myFont = font.Font(family = "Courier New TUR", size = 8, weight = "bold")
+
+        searchBtnnw = tk.Button(quickAdd2nw, text = 'SEARCH', command = search)
+        searchBtnnw.grid(column = 2, row = 1, pady = 5, padx = 7, rowspan = 2, columnspan = 1, sticky = "ne")
+        searchBtnnw['font'] = myFont
+
+        resultsLblnw = tk.Label(quickAdd2nw, text = "Results for " + query)
+        resultsLblnw.grid(column = 0, row =3, columnspan = 3, pady = 5, padx = 10)
+
+        acctSearchnw.bind('<Return>', search)
+
+        treev = ttk.Treeview(quickAdd3nw, selectmode ='browse') 
+
+        # Calling pack method w.r.to treeview 
+        treev.pack(side = LEFT) 
+
+        # Constructing vertical scrollbar 
+        # with treeview 
+        verscrlbar = ttk.Scrollbar(quickAdd3nw,  
+                                   orient ="vertical",  
+                                   command = treev.yview) 
+
+        # Calling pack method w.r.to verical  
+        # scrollbar 
+        verscrlbar.pack(side = RIGHT, fill = Y) 
+        
+        # Configuring treeview 
+        treev.configure(yscrollcommand = verscrlbar.set) 
+
+        # Defining number of columns 
+        treev["columns"] = ("1", "2", "3", "4") 
+
+        # Defining heading 
+        treev['show'] = 'headings'
+
+        # Assigning the width and anchor to  the 
+        # respective columns 
+        treev.column("1", width = 150, minwidth = 25, anchor ='c') 
+        treev.column("2", width = 180, minwidth = 25, anchor ='se') 
+        treev.column("3", width = 120, minwidth = 25, anchor ='se')
+        treev.column("4", width = 120, minwidth = 25, anchor ='se')
+
+        # Assigning the heading names to the  
+        # respective columns 
+        treev.heading("1", text ="Client Name") 
+        treev.heading("2", text ="Asset Name") 
+        treev.heading("3", text ="Account Number")
+        treev.heading("4", text ="IPS Signed Date")
+
+        newWindow.protocol("WM_DELETE_WINDOW", reset_window_count)
+        
+        generateBtnnw = tk.Button(buttonsFramenw, text = "Generate Selected", command = quick_generate,  bg = '#1261A0', fg ='White')
+        generateBtnnw.grid(pady = 10)
+        newWindow.lift()
+    else:
+        acctSearchnw.insertion = acctSearch.get()
+        acctSearchnw.delete(0, 'end')
+        acctSearchnw.insert_insertion(e = None)
+        newWindow.lift()
+        
+
+def updateTreeview(df, window = 0, partial = False):
+    global count
+    
+    if window == 1:
+        for record in treev.get_children():
+            treev.delete(record)
+
+        # Inserting the items and their features to the  
+        # columns built
+        for index, row in df.iterrows():
+            
+            if row['IPS_Date_Signed'] != "NULL":
+                signdate = row['IPS_Date_Signed'].strftime("%Y-%m-%d")
+            else:
+                signdate = "NULL"
+                
+            treev.insert("", index = 'end', iid = count, 
+                        text = row['UIRecordID'], 
+                        values = (row['Record_Name'], row['Asset_Name'], row['A_Account_Number'], signdate))
+            count += 1
+    elif window == 2:
+        
+        dateTimeObj = datetime.now()
+        timestampStr = dateTimeObj.strftime("%Y-%m-%d (%H:%M)")
+        
+        # Inserting the items and their features to the  
+        # columns built
+        if partial == False:
+            for index, row in df.iterrows():
+                
+                try:
+                    if row['IPS_Date_Signed'] != "NULL":
+                        signdate = row['IPS_Date_Signed'].strftime("%Y-%m-%d")
+                    else:
+                        signdate = "NULL"
+                    
+                    if row['Flag'] == True:
+                        flag ="FLAG"
+                    else:
+                        flag = "GOOD"
+                    acctOutputTree.insert("", index = 0, iid = count, 
+                            text = row['UIRecordID'], 
+                            values = (row['Record_Name'], row['Asset_Name'], row['A_Account_Number'], flag, signdate, timestampStr))
+    
+                    count += 1
+                except:
+                    #Error 6
+                    messagebox.showerror("Error", "Error 6: Account " + row['A_Account_Number'] + " not found.")
+                    append("ERROR: Record was not found in database.  Acct. No." + row['A_Account_Number'] + " not generated.", "error")
+        else:
+            values = df["Items"].tolist()
+           
+            try:
+                acctOutputTree.insert("", index = 'end', iid = count, 
+                        text = str(count), 
+                        values = (values[0], values[1], values[2], "NULL", values[3], timestampStr))
+                count += 1
+            except:
+                #Error 7
+                append("ERROR: No Record Name was given", "error")
+                messagebox.showerror("Error", "Error 7")
+            
+    else:
+        append("ERROR: An unexpected error has occurred.  Window out of bounds exception.", "error")
+        messagebox.showerror("Error", "An unexpected error occurred.  Window out of bounds exception.")
+            
+        
+def quick_generate(_event = None):
+    
+#     try:
+    selected = treev.focus()
+
+    values = treev.item(selected, 'values')
+    
+
+    generate_Multi("quick_Generate", values[2])
+#     except:
+#         append("No Record Name was selected")
+#         messagebox.shfowerror("Error", "Error 10: Please select a record")
+#         returnapp
+    
+##################################################
+####################################
+
+reset_grid("Dashboard")
+init_Settings()
+print(defaultExcel)
+root.protocol("WM_DELETE_WINDOW", on_closing)
+root.mainloop()
