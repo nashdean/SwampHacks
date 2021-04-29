@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="@drawable/ic_bg"
+    tools:context=".LeaderboardActivity">
+
+    <TextView
+        android:id="@+id/tv_appScores"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Scoreboard"
+        android:textColor="@android:color/white"
+        android:gravity="center"
+        android:layout_marginBottom="30dp"
+        android:textSize="25sp"
+        android:textStyle="bold"
+        />
+
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="20dp"
+        android:layout_marginEnd="20dp"
+        android:background="@android:color/white"
+        app:cardCornerRadius="8dp"
+        app:cardElevation="5dp"
+        >
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="16dp"
+            >
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="High Scores"
+                android:textStyle="bold"
+                android:padding="16dp"
+                android:textSize="24sp"
+                android:gravity="center"></TextView>
+
+            <!-- Horizontal -->
+            <LinearLayout
+                xmlns:android="http://schemas.android.com/apk/res/android"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:layout_weight="1">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Name"
+                    android:textStyle="bold"
+                    android:paddingTop="16dp"
+                    android:layout_marginLeft="15dp"
+                    android:textSize="18sp"
+                    android:gravity="center"
+                    android:layout_weight="1"></TextView>
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Score"
+                    android:textStyle="bold"
+                    android:layout_marginLeft="8dp"
+                    android:paddingTop="16dp"
+                    android:textSize="18sp"
+                    android:gravity="center"
+                    android:layout_weight="1"></TextView>
+
+            </LinearLayout>
+            <!-- Horizontal Each Person -->
+
+            <LinearLayout
+                xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:layout_weight="1">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="1."
+
+                    android:padding="2dp"
+                    android:textSize="14sp"
+                    android:gravity="center"
+                    ></TextView>
+                <TextView
+                    android:id="@+id/tv_playerName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="--"
+
+                    android:padding="2dp"
+                    android:textSize="14sp"
+                    android:gravity="center"
+                    android:layout_weight="2"></TextView>
+                <TextView
+                    android:id="@+id/tv_playerScore"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="--"
+
+                    android:padding="2dp"
+                    android:textSize="14sp"
+                    android:gravity="center"
+                    android:layout_weight="2"></TextView>
+
+            </LinearLayout>
+        </LinearLayout>
+
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:background="@android:color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:padding="2dp">
+
+
+            </LinearLayout>
+
+        </androidx.core.widget.NestedScrollView>
+    </androidx.cardview.widget.CardView>
+    <Button
+        android:id="@+id/btn_lbToMainMenu"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:textStyle="bold"
+        android:layout_margin="32dp"
+        android:text="MAIN MENU">
+    </Button>
+
+</LinearLayout>
