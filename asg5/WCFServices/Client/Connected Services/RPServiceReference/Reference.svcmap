@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ReferenceGroup xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" ID="fd10de72-5890-41f9-825b-0a574ae15c94" xmlns="urn:schemas-microsoft-com:xml-wcfservicemap">
+  <ClientOptions>
+    <GenerateAsynchronousMethods>false</GenerateAsynchronousMethods>
+    <GenerateTaskBasedAsynchronousMethod>true</GenerateTaskBasedAsynchronousMethod>
+    <EnableDataBinding>true</EnableDataBinding>
+    <ExcludedTypes />
+    <ImportXmlTypes>false</ImportXmlTypes>
+    <GenerateInternalTypes>false</GenerateInternalTypes>
+    <GenerateMessageContracts>false</GenerateMessageContracts>
+    <NamespaceMappings />
+    <CollectionMappings />
+    <GenerateSerializableTypes>true</GenerateSerializableTypes>
+    <Serializer>Auto</Serializer>
+    <UseSerializerForFaults>true</UseSerializerForFaults>
+    <ReferenceAllAssemblies>true</ReferenceAllAssemblies>
+    <ReferencedAssemblies />
+    <ReferencedDataContractTypes />
+    <ServiceContractMappings />
+  </ClientOptions>
+  <MetadataSources>
+    <MetadataSource Address="http://localhost:63810/RPService.svc" Protocol="http" SourceId="1" />
+  </MetadataSources>
+  <Metadata>
+    <MetadataFile FileName="RPService.disco" MetadataType="Disco" ID="3bc2b036-43fd-4f6b-be16-8f10941de179" SourceId="1" SourceUrl="http://localhost:63810/RPService.svc?disco" />
+    <MetadataFile FileName="RPService.wsdl" MetadataType="Wsdl" ID="bfe08c61-d9c1-428c-b26b-7fce2cbbced0" SourceId="1" SourceUrl="http://localhost:63810/RPService.svc?wsdl" />
+    <MetadataFile FileName="RPService.xsd" MetadataType="Schema" ID="3b21edce-11e3-48e7-9a39-bb44d5ff6b14" SourceId="1" SourceUrl="http://localhost:63810/RPService.svc?xsd=xsd0" />
+    <MetadataFile FileName="RPService1.xsd" MetadataType="Schema" ID="b00f2946-c526-456b-9660-7b2e6e22f5e1" SourceId="1" SourceUrl="http://localhost:63810/RPService.svc?xsd=xsd1" />
+    <MetadataFile FileName="RPService2.xsd" MetadataType="Schema" ID="e4b2462a-ce8c-4d97-bcf8-2af1f9595f7d" SourceId="1" SourceUrl="http://localhost:63810/RPService.svc?xsd=xsd2" />
+  </Metadata>
+  <Extensions>
+    <ExtensionFile FileName="configuration91.svcinfo" Name="configuration91.svcinfo" />
+    <ExtensionFile FileName="configuration.svcinfo" Name="configuration.svcinfo" />
+  </Extensions>
+</ReferenceGroup>
